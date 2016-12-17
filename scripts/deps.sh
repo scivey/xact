@@ -1,6 +1,6 @@
 #!/bin/bash
 
-. $(dirname ${BASH_SOURCE[[0]})/common.sh
+. $(dirname ${BASH_SOURCE[0]})/common.sh
 
 XACT_EXT_DIR=${XACT_ROOT_DIR}/external
 
