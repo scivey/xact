@@ -1,0 +1,10 @@
+{
+	"folders":
+	[
+		{
+			"path": ".",
+            "file_exclude_patterns": ["*.jar"],
+            "folder_exclude_patterns": ["build", ".bin", "node_modules"]
+		}
+	]
+}
