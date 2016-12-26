@@ -34,10 +34,9 @@ global xact_asm_dcas_u64
         mov [rbp-8], rdx ; target1_desired value
         mov [rbp-16], r9 ; target2_desired value
 
-        jmp xact_asm_dcas_u64_begin_transaction
+        jmp .transaction_pre_check
 
-
-    xact_asm_dcas_u64_on_failure:
+    .on_transaction_failed:
         ; set target1_expected_ptr to current value of target1_ptr
         mov rdx, [r12]
         mov [r13], rdx
@@ -47,39 +46,57 @@ global xact_asm_dcas_u64
         mov [r15], rdx
 
         mov rax, 0 ; return false for failure
-        jmp xact_asm_dcas_u64_end
+        jmp .on_end
+
+    .transaction_pre_check:
+        mov rax, [r12] ; load current value of target1_ptr
+        mov rdx, [r13] ; load value of target1_expected_ptr
+        cmp rax, rdx ; compare current *target1_ptr to *target1_expected_ptr
+        jne .on_transaction_failed
 
 
-    xact_asm_dcas_u64_begin_transaction:
-        ; xor rax, rax
-        ; xor rdx, rdx
-        ; mov rdx, [rbp-8]
-        mov rax, [r12]
-        mov rdx, [rbp-8]
-        ; mov rax, [r12]   ; load current value of target1_ptr
-        cmp rax, rdx ; compare current target1_ptr value to target1_expected_ptr
-        jne xact_asm_dcas_u64_on_failure
+        mov rax, [r14] ; load current value of target2_ptr
+        mov rdx, [r15] ; load value of target2_expected_ptr
+        cmp rax, rdx ; compare current *target2_ptr to *target2_expected_ptr
+        jne .on_transaction_failed
 
-        ; xor rax, rax
-        ; xor rdx, rdx
-        mov rax, [r14]
-        mov rdx, [rbp-16]
-        cmp rax, rdx ; compare current target2_ptr value to target2_expected_ptr
-        ; jne xact_asm_dcas_u64_on_failure
 
+    .begin_transaction:
         ; the actual transaction
-        xbegin xact_asm_dcas_u64_on_failure
+        xbegin .on_transaction_failed
+
+
+    .transaction_step_1:
+        ; test value of target1_ptr against expected value again,
+        ; this time within actual transaction block.
+        mov rax, [r12] ; load current value of target1_ptr
+        mov rdx, [r13] ; load value of target1_expected_ptr
+        cmp rax, rdx ; compare current *target1_ptr to *target1_expected_ptr
+        je .transaction_step_2
+        xabort 0
+
+    .transaction_step_2:
         ; set target1 to desired value
-        mov rax, [rsp]
-        mov [r12], rax
-        ; set target2 to desired value
         mov rax, [rsp+8]
+        mov [r12], rax
+
+    .transaction_step_3:
+        ; test value of target2_ptr against expected value again,
+        ; this time within actual transaction block.
+        mov rax, [r14] ; load current value of target2_ptr
+        mov rdx, [r15] ; load value of target2_expected_ptr
+        cmp rax, rdx ; compare current *target2_ptr to *target2_expected_ptr
+        je .transaction_step_4
+        xabort 0
+
+    .transaction_step_4:
+        ; set target2 to desired value
+        mov rax, [rsp]
         mov [r14], rax
         xend
         mov rax, 1
 
-
-    xact_asm_dcas_u64_end:
+    .on_end:
         add rsp, 16 ; make up for the stack space we stole
         pop rbp
         pop r15
