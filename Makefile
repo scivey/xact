@@ -8,25 +8,26 @@ clean:
 	rm -rf build
 	rm -f *.log
 
-
 base: deps
 	mkdir -p build
 	rm -f build/*.o build/*.a
 	cd build && cmake ../
 
-clean-asm:
-	rm -f build/*.o build/*.a
-
 build-all: base
 	cd build && make -j8
 
 scratch: build-all
-	./build/run_scratch
+	./build/src/scratch/run_scratch
 
 test: build-all
-	./build/xact_test_runner
+	./build/src/test/run_unit_tests
+
+spinlock_bench: build-all
+	./build/src/bench/spinlock_comparison
 
 BENCHES ?= .*
-bench: build-all
-	./build/benchmark_runner --benchmark_filter=$(BENCHES)
+micro_bench: build-all
+	./build/src/bench/micro_benchmarks --benchmark_filter=$(BENCHES)
+
+bench: micro_bench spinlock_bench
 
