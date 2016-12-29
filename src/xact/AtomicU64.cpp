@@ -38,4 +38,11 @@ value_type AtomicU64::compareExchange(value_type expected, value_type desired) {
   return atomic_ops::casU64S(value_.ptr(), expected, desired);
 }
 
+bool AtomicU64::fetchAddIfBetween(value_type *result, value_type addBy,
+      value_type lowerBoundInclusive, value_type upperBoundExclusive) {
+  return atomic_ops::fetchAddU64SIfBetween(
+    value_.ptr(), result, addBy, lowerBoundInclusive, upperBoundExclusive
+  );
+}
+
 } // xact

@@ -14,6 +14,9 @@ void xact_mfence();
 void xact_atomic_store_u64_single(uint64_t *target, uint64_t value);
 uint64_t xact_atomic_load_u64_single(uint64_t *target);
 uint64_t xact_atomic_fetch_add_u64_single(uint64_t *target, uint64_t value);
+int xact_atomic_conditional_fetch_add_u64_single_if_between(uint64_t *target, uint64_t *result,
+    uint64_t addBy, uint64_t lower_inclusive, uint64_t upper_exclusive);
+
 uint64_t xact_atomic_fetch_sub_u64_single(uint64_t *target, uint64_t value);
 
 int xact_atomic_cas_u64_single(uint64_t *target,

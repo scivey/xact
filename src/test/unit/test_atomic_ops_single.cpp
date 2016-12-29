@@ -63,8 +63,6 @@ TEST(TestU64SingleOps, TestNoContentionOnHeap) {
 }
 
 
-
-
 TEST(TestU64SingleOps, TestCASSequence) {
   Box64 box {0};
   auto boxPtr = box.ptr();

@@ -33,4 +33,12 @@ uint64_t fetchSubU64S(uint64_t *atomTarget, uint64_t subBy) {
   return xact_atomic_fetch_sub_u64_single(atomTarget, subBy);
 }
 
+bool fetchAddU64SIfBetween(uint64_t *atomTarget, uint64_t *result, uint64_t subBy,
+    uint64_t lowerBoundInclusive, uint64_t upperBoundExclusive) {
+  return xact_atomic_conditional_fetch_add_u64_single_if_between(
+    atomTarget, result, subBy, lowerBoundInclusive, upperBoundExclusive
+  ) == 0;
+}
+
+
 }} // xact::atomic_ops

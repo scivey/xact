@@ -26,6 +26,8 @@ class AtomicU64 {
   AtomicU64& operator=(value_type);
   value_type load();
   value_type fetchAdd(value_type value);
+  bool fetchAddIfBetween(value_type *result, value_type addBy,
+      value_type lowerBoundInclusive, value_type upperBoundExclusive);
   value_type fetchSub(value_type value);
   value_type compareExchange(value_type expected, value_type desired);
 };
