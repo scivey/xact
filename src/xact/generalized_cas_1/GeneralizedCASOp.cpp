@@ -5,15 +5,15 @@
 
 namespace xact { namespace generalized_cas_1 {
 
-GeneralizedCASCore& GeneralizedCAS::core() {
+GeneralizedCASOpCore& GeneralizedCASOp::core() {
   return core_;
 }
 
-const GeneralizedCASCore& GeneralizedCAS::core() const {
+const GeneralizedCASOpCore& GeneralizedCASOp::core() const {
   return core_;
 }
 
-bool GeneralizedCAS::execute() {
+bool GeneralizedCASOp::execute() {
   return xact_generalized_cas_op(
     core_.preconditions, core_.nPreconditions,
     core_.operations, core_.nOperations

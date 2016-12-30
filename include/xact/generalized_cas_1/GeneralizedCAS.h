@@ -1,24 +1,87 @@
 #pragma once
-#include <cstddef>
-#include "xact/generalized_cas_1/Operation.h"
+#include "xact/generalized_cas_1/GeneralizedCASOp.h"
 #include "xact/generalized_cas_1/Precondition.h"
+#include "xact/generalized_cas_1/Operation.h"
+#include "xact/generalized_cas_1/VectorStoragePolicy.h"
+#include "xact/generalized_cas_1/ExceptionErrorPolicy.h"
 
 namespace xact { namespace generalized_cas_1 {
 
-struct GeneralizedCASCore {
-  PreconditionCore *preconditions {nullptr};
-  size_t nPreconditions {0};
-  OperationCore *operations {nullptr};
-  size_t nOperations {0};
+
+template<
+  typename TStoragePolicy = VectorStoragePolicy,
+  typename TErrorPolicy = ExceptionErrorPolicy
+>
+class GeneralizedCAS: public TStoragePolicy,
+                      public TErrorPolicy {
+ public:
+  using error_policy_t = TErrorPolicy;
+  using storage_policy_t = TStoragePolicy;
+
+  GeneralizedCAS(){}
+
+  template<typename TCondOrOpSeq>
+  GeneralizedCAS(TCondOrOpSeq&& elems) {
+    for (auto&& elem: elems) {
+      push(std::forward<decltype(elem)>(elem));
+    }
+  }
+
+  template<typename TCondOrOpSeq1, typename TCondOrOpSeq2>
+  GeneralizedCAS(TCondOrOpSeq1&& elems1, TCondOrOpSeq2&& elems2) {
+    for (auto&& elem: elems1) {
+      push(std::forward<decltype(elem)>(elem));
+    }
+    for (auto&& elem: elems2) {
+      push(std::forward<decltype(elem)>(elem));
+    }
+  }  
+
+  bool hasOperations() const {
+    return this->getOperationCount() > 0;
+  }
+  bool hasPreconditions() const {
+    return this->getPreconditionCount() > 0;
+  }
+  bool empty() const {
+    return !hasOperations() && !hasPreconditions();
+  }
+  bool execute() {
+    if (!hasOperations()) {
+      return this->onEmptyExecution();
+    }
+    auto casOp = GeneralizedCASOp();
+    auto& opCore = casOp.core();
+
+    Precondition* preconditions = this->getPreconditionStorage();
+    static_assert(
+      sizeof(Precondition) == sizeof(PreconditionCore),
+      "Precondition size assumptions violated"
+    );
+    opCore.preconditions = (PreconditionCore*) preconditions;
+    opCore.nPreconditions = this->getPreconditionCount();
+
+    Operation *operations = this->getOperationStorage();
+    static_assert(
+      sizeof(Operation) == sizeof(OperationCore),
+      "Operation size assumptions violated"
+    );
+    opCore.operations = (OperationCore*) operations;
+    opCore.nOperations = this->getOperationCount();
+
+    return casOp.execute();
+  }
+  void push(Precondition&& condition) {
+    this->pushPrecondition(std::forward<Precondition>(condition));
+  }
+  void push(Operation&& operation) {
+    this->pushOperation(std::forward<Operation>(operation));
+  }
+  void clear() {
+    this->clearPreconditionStorage();
+    this->clearOperationStorage();
+  }
 };
 
-class GeneralizedCAS {
- protected:
-  GeneralizedCASCore core_;
- public:
-  GeneralizedCASCore& core();
-  const GeneralizedCASCore& core() const;
-  bool execute();
-};
 
 }} // xact::generalized_cas_1

@@ -1,20 +1,60 @@
 # XACT
 
-## Lock-free N-way atomic compare-and-swap:
-## TSX-based concurrency primitives for C++/linux/x64
+## TSX-based concurrency primitives for C++/linux/x64:
+## Lock-free N-way atomic CAS
+## Generalized, predicate-based N-way conditional store / CAS / FAA
 
-### Background
-Intel's TSX instructions, included in some Haswell processors and more widely available in recent Skylake chips, implement a restricted form of hardware transactional memory.  TSX is powerful, but has some severe limitations: it gets cranky when you touch too much memory at once, and it likes to mysteriously abort transactions.  Intel hasn't released many details on the underlying algorithms.  You get the idea: it isn't really suitable for general purpose transactional memory.
+XACT is a library of lock-free primitives based on brief hardware-level transactions.
 
-Currently, TSX instructions are seeing some use in glibc and libraries like [ConcurrencyKit](http://concurrencykit.org/) to [optimize lock-based concurrency control](https://lwn.net/Articles/534758/).  While this approach enables some impressive speedups, it ends up presenting the same lock-based, blocking API to the programmer.
+It uses Intel's Thread Synchronization Extensions (TSX), which are intended to support transactional memory implementations, but XACT does not aim to provide true transactional memory.
 
-XACT takes a middle road: it doesn't use TSX for full-blown transactional memory, but also doesn't just use it to transparently elide locks.  Instead, it aims to provide a higher-level interface to a small set of non-lock-based primitives.
+Instead, it uses tightly scoped mini-transactions to power extended and generalized versions of the lock-free primitives programmers are already familiar with: compare-and-swap, fetch-and-add, and atomic load and store.  This enables low-level operations that would otherwise require locking, while avoiding the unfamiliar performance profile and other potential pitfalls of full-blown transactional memory.
 
-The basic idea is to use just enough TSX to get the job done.  XACT intentionally keeps hardware-level transactions very short, with as few memory accesses as necessary, to avoid the spurious failures and aborts that seem to have limited TSX's use so far.
+XACT is a work in progress, but already offers features that don't otherwise appear to be available.
 
-One fundamental primitive in lock-free programming is compare-and-swap, as provided by the `cmpxchg` x86 instruction.  This is "single" CAS: it operates on a single memory location at a time, which places a number of constraints on its applications.  Double-CAS, or DCAS, comes up a lot in papers, but isn't meaningfully supported by any modern mainstream architecture.  This is unfortunate, as people have been dreaming up algorithms requiring DCAS for [a long time now](http://i.stanford.edu/pub/cstr/reports/cs/tr/99/1624/CS-TR-99-1624.pdf).
 
-I'm also pretty tired of plain single CAS, so XACT's first main feature is a lock-free, multi-way, atomic compare-and-swap operation.  This allows for double-CAS as well as triple- and quadruple-CAS.  And also 8-way CAS.  As a bonus, N-way atomic stores, loads, and fetch-adds are also supported.
+### Features
+XACT currently has two main interfaces.
+
+#### The N-Way Interface
+The first interface is an N-way extension of existing x64 atomic operations.
+
+Like all other mainstream architectures today, x64 only allows atomic compare-and-exchange (CAS) to a single memory location at a time.  Atomic load, store and fetch-add have similar limitations, especially when the addresses are on separate cache lines.
+
+XACT's first interface extends these operations to multiple memory locations at a time.  This enables double compare-and-swap (DCAS), which is a prerequisite for a number of theoretical lock-free data structures.  It also allows for N-way CAS in general: the exact bounds are currently unclear, but 8-way and 16-way CAS are both perfectly functional.
+
+The N-way interface similarly extends plain loads and stores: a reader can take a consistent snapshot of multiple memory addresses, and a writer can atomically store to multiple addresses.
+
+
+#### The Generalized CAS Interface
+The N-Way Interface is a little bit like SIMD: it's doing more or less the same thing at multiple locations.  The Generalized CAS Interface is more flexible, and enables some operations that don't have analogues in among x86 atomic instructions.
+
+This interface is a generalization of compare-and-swap which allows for multiple predicate-based preconditions, as well as multiple effects when those preconditions are met.
+
+To clarify, think of `cmpxchg` as a combination of one precondition and one effect:
+```
+[precondition] The value at address A is expected to equal X
+
+[if preconditions satisfied....]
+[effect]       Store Y at address A.
+```
+
+The Generalized CAS interface allows for multiple preconditions and effects to be combined, so that the following can be performed as one atomic operation:
+```
+[precondition] The value at address A is expected to equal 10
+[precondition] The value at address B is expected to be greater than 100
+[precondition] The value at address B is expected to be less than 200
+[precondition] The value at address C is expected not to equal 17
+[precondition] The value at address D is expected to be greater than 1000
+[precondition] The value at adresss E is greater than 0
+
+[if preconditions satisfied...]
+[effect]       Store the value 20 at address A
+[effect]       Atomically increment the value at B by 5
+[effect]       Store the value 17 at address C
+[effect]       Atomically decrement the value at D by 1
+```
+This interface does have limitations: it doesn't allow for more general logic or branching, and it can't currently model dependencies between target memory locations well.  Despite this, it's still significantly more expressive than a single compare-and-swap.
 
 
 ### Implementation
@@ -25,7 +65,6 @@ If you're interested in the underlying details, the assembly parts are [document
 
 ### API
 See the example below, as well as some API notes [here](/docs/api.md).
-
 
 
 ### Multi-CAS Example
@@ -113,10 +152,8 @@ make install
 ```
 
 ### Roadmap
-Future ideas:
-* More general transactional operations, e.g. a write to two locations conditional on the values at four other locations.
-* A generalized predicate-based compare and swap. (testing for not just equality but `<=`, `>`, etc.)
-* Spinlock-based fallbacks, both for non-TSX chips and for frequently failing transactions.
+Future plans:
+* Optional spinlock-based fallbacks, both for non-TSX chips and for frequently failing transactions.
 
 ### License
 MIT
