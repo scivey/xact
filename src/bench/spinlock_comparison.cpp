@@ -5,29 +5,30 @@
 #include <memory>
 #include <thread>
 #include <mutex>
-#include <iostream>
+#include <set>
 
-#include "xact/util/PThreadSpinLock.h"
-#include "xact/AtomicU64.h"
-#include "xact/FixedAtomicU64Group.h"
-#include "xact/macros.h"
-#include "xact/fence.h"
-#include "xact/AlignedBox.h"
+#include <iostream>
+#include <random>
+
+#include "xact/detail/util/PThreadSpinLock.h"
+#include "xact/LockableAtomicU64.h"
+#include "xact/generalized_cas/GeneralizedCAS.h"
+#include "xact/generalized_cas/ArrayStoragePolicy.h"
+#include "xact/generalized_cas/GeneralizedCASExecutor.h"
+#include "xact/detail/macros.h"
+#include "xact/detail/fence.h"
+#include "xact/detail/AlignedBox.h"
 
 using namespace std;
-using xact::util::PThreadSpinLock;
+using xact::detail::util::PThreadSpinLock;
+using xact::TransactionStatus;
 
 
-template<typename T, size_t N, typename LockType>
+template<size_t N, typename LockType>
 class LockedNumArray {
-  static_assert(
-    std::is_integral<T>::value,
-    "LockedNumArray expects an integral type."
-  );
  public:
-  using val_t = T;
-  using data_t = std::array<uint64_t, N>;
-  using boxed_data_t = std::array<xact::AlignedBox<uint64_t, 16>, N>;
+  using val_t = uint64_t;
+  using boxed_data_t = std::array<xact::detail::AlignedBox<uint64_t, 64>, N>;
   using lock_t = LockType;
  protected:
   boxed_data_t data_;
@@ -35,133 +36,161 @@ class LockedNumArray {
  public:
   LockedNumArray(){}
   LockedNumArray(lock_t& lock): lock_(lock){}
-  void store(const data_t& toStore) {
-    std::lock_guard<lock_t> guard;
-    for (size_t i = 0; i < N; i++) {
-      data_[i] = toStore[i];
+  static size_t maxSize() {
+    return N;
+  }
+ protected:
+  void writeNAt(std::pair<size_t, val_t> *pairs, size_t nPairs) {
+    std::lock_guard<lock_t> guard {lock_};
+    for (size_t i = 0; i < nPairs; i++) {
+      std::pair<size_t, val_t> current = *pairs;
+      data_[current.first] = current.second;
     }
   }
-  void storeAt(size_t idx, T value) {
+  void readNAt(size_t *idxs, size_t nIdxs, uint64_t *result) {
     std::lock_guard<lock_t> guard {lock_};
-    data_[idx] = value;
-  }
-  void load(data_t& result) {
-    std::lock_guard<lock_t> guard {lock_};
-    for (size_t i = 0; i < N; i++) {
-      result[i] = data_[i];
+    for (size_t i = 0; i < nIdxs; i++) {
+      size_t idx = *idxs;
+      *result = data_[idx];
+      ++idxs;
+      ++result;
     }
   }
-  void add(T value) {
+ public:
+  void writeAt(size_t idx, val_t val) {
     std::lock_guard<lock_t> guard {lock_};
-    for (size_t i = 0; i < N; i++) {
-      data_[i] += value;
-    }
+    data_[idx] = val;
+  }
+  template<size_t NElem>
+  void writeNAt(std::array<std::pair<size_t, val_t>, NElem> &pairs) {
+    writeNAt(pairs.data(), pairs.max_size());
+  }
+
+  val_t readAt(size_t idx) {
+    std::lock_guard<lock_t> guard {lock_};
+    return data_[idx];
+  }
+
+  template<size_t NElem>
+  void readNAt(std::array<size_t, NElem> &idxs, std::array<val_t, NElem> &vals) {
+    readNAt(idxs.data(), idxs.max_size(), vals.data());
+  }
+
+  template<size_t NElem>
+  std::array<val_t, NElem> readNAt(std::array<size_t, NElem> &idxs) {
+    std::array<val_t, NElem> result;
+    readNAt(idxs, result);
+    return result;
   }
 };
 
 
-template<size_t NAtoms, size_t NWriters, size_t NReaders, size_t IncrPerThread, size_t ReadsPerThread>
-struct BenchParams {
-  static const size_t kInitVal = 10;
-  static const size_t kNAtoms = NAtoms;
-  static const size_t kNWriters = NWriters;
-  static const size_t kNReaders = NReaders;
-  static const size_t kIncrPerThread = IncrPerThread;
-  static const size_t kReadsPerThread = ReadsPerThread;
-  static const size_t kExpectedFinalVal = kInitVal + kNWriters * kIncrPerThread;
-};
 
-
-template<typename TLock, typename BParams>
-void runLockedSmart(TLock& mut) {
-  using data_t = LockedNumArray<uint64_t, BParams::kNAtoms, TLock>;
-  data_t atoms{mut};
-  for (size_t i = 0; i < BParams::kNAtoms; i++) {
-    atoms.storeAt(i, BParams::kInitVal);
+template<size_t N>
+class TransactionalNumArray {
+ public:
+  using val_t = uint64_t;
+  using boxed_data_t = std::array<xact::detail::AlignedBox<
+    xact::LockableAtomicU64, 64
+  >, N>;
+  using Operation = xact::generalized_cas::Operation;
+  using gencas_t = xact::generalized_cas::GeneralizedCAS<
+    xact::generalized_cas::ArrayStoragePolicy<16>,
+    xact::generalized_cas::ExceptionErrorPolicy
+  >;
+  using gencas_init_t = xact::generalized_cas::GeneralizedCAS<
+    xact::generalized_cas::ArrayStoragePolicy<N+1>,
+    xact::generalized_cas::ExceptionErrorPolicy
+  >;  
+  using gencas_exec_t = xact::generalized_cas::GeneralizedCASExecutor<
+    xact::generalized_cas::DefaultCASExecutorRetryPolicy
+  >;
+ protected:
+  boxed_data_t data_;
+  static thread_local gencas_exec_t casExecutor_;
+ public:
+  static size_t maxSize() {
+    return N;
   }
-  vector<unique_ptr<thread>> threads;
-  for (size_t i = 0; i < BParams::kNReaders; i++) {
-    threads.push_back(std::unique_ptr<thread>{new thread{[&atoms]() {
-      array<uint64_t, BParams::kNAtoms> loaded;
-      for (size_t i = 0; i < BParams::kReadsPerThread; i++) {
-        atoms.load(loaded);
-        auto first = loaded[0];
-        for (auto elem: loaded) {
-          CHECK_EQ(first, elem);
-        }
-      }
-    }}});
-  }
-  for (size_t i = 0; i < BParams::kNWriters; i++) {
-    threads.push_back(std::unique_ptr<thread>{new thread{[&atoms]() {
-      for (size_t i = 0; i < BParams::kIncrPerThread; i++) {
-        atoms.add(1);
-      }
-    }}});
-  }
-  for (auto& t: threads) {
-    t->join();
-  }
-}
-
-template<typename BParams>
-void runTransactional() {
-  using AtomGroup = xact::FixedAtomicU64Group<BParams::kNAtoms>;
-  array<xact::AtomicU64, BParams::kNAtoms> atoms;
-  array<xact::AtomicU64*, BParams::kNAtoms> atomsPtrs;
-  static const size_t NAtoms = BParams::kNAtoms;
-  for (size_t i = 0; i < NAtoms; i++) {
-    atoms[i].store(BParams::kInitVal);
-    atomsPtrs[i] = atoms.data() + i;
-  }
-  vector<unique_ptr<thread>> threads;
-  for (size_t i = 0; i < BParams::kNReaders; i++) {
-    threads.push_back(std::unique_ptr<thread>{new thread{[&atomsPtrs]() {
-      array<uint64_t, NAtoms> loaded;
-      AtomGroup group {atomsPtrs};
-      for (size_t i = 0; i < BParams::kReadsPerThread; i++) {
-        for (;;) {
-          if (group.load(loaded)) {
-            auto first = loaded[0];
-            for (auto elem: loaded) {
-              CHECK_EQ(first, elem);
-            }
-            break;
-          }
-        }
-      }
-    }}});
-  }
-  for (size_t i = 0; i < BParams::kNWriters; i++) {
-    threads.push_back(std::unique_ptr<thread>{new thread{[&atomsPtrs]() {
-      array<uint64_t, NAtoms> expected;
-      array<uint64_t, NAtoms> desired;
-      AtomGroup group {atomsPtrs};
-      for (size_t i = 0; i < BParams::kIncrPerThread; i++) {
-        for (;;) {
-          if (group.add(1)) {
-            break;
-          }
-        }
-      }
-    }}});
-  }
-  for (auto &t: threads) {
-    t->join();
-  }
-  AtomGroup group {atomsPtrs};
-  array<uint64_t, NAtoms> loaded;
-  for (;;) {
-    if (group.load(loaded)) {
-      break;
+  TransactionalNumArray() {
+    gencas_init_t transaction;
+    for (size_t i = 0; i < N; i++) {
+      auto result = data_[i].value.store(0);
+      CHECK(result == TransactionStatus::OK)
+        << "failed TransactionStatus: " << static_cast<uint64_t>(result);
     }
   }
-  auto first = loaded[0];
-  CHECK_EQ(first, BParams::kExpectedFinalVal);
-  for (auto elem: loaded) {
-    CHECK_EQ(first, elem);
+ protected:
+  void writeNAt(std::pair<size_t, val_t> *pairs, size_t nPairs) {
+    gencas_t transaction;
+    for (size_t i = 0; i < nPairs; i++) {
+      std::pair<size_t, val_t> current = *pairs;
+      ++pairs;
+      transaction.push(
+        Operation::store(&data_[current.first].value, current.second)
+      );
+    }
+    TransactionStatus result = casExecutor_.execute(transaction);
+    CHECK(result == TransactionStatus::OK)
+      << "failed TransactionStatus: " << static_cast<uint64_t>(result);
   }
-}
+  void readNAt(size_t *idxs, size_t nIdxs, uint64_t *result) {
+    gencas_t transaction;
+    for (size_t i = 0; i < nIdxs; i++) {
+      size_t idx = *idxs;
+      transaction.push(
+        Operation::load(&data_[idx].value, result)
+      );
+      ++idxs;
+      ++result;
+    }
+    CHECK(casExecutor_.execute(transaction) == TransactionStatus::OK);
+  }
+ public:
+  void writeAt(size_t idx, val_t val) {
+    gencas_t transaction {
+      {},
+      {
+        Operation::store(&data_[idx].value, val)
+      }
+    };
+    CHECK(casExecutor_.execute(transaction) == TransactionStatus::OK);
+  }
+
+  template<size_t NElem>
+  void writeNAt(std::array<std::pair<size_t, val_t>, NElem> &pairs) {
+    writeNAt(pairs.data(), pairs.max_size());
+  }
+
+  val_t readAt(size_t idx) {
+    val_t result;
+    gencas_t transaction {
+      {},
+      {
+        Operation::load(&data_[idx].value, &result)
+      }
+    };
+    CHECK(casExecutor_.execute(transaction) == TransactionStatus::OK);
+    return result;
+  }
+
+  template<size_t NElem>
+  void readNAt(std::array<size_t, NElem> &idxs, std::array<val_t, NElem> &vals) {
+    readNAt(idxs.data(), idxs.max_size(), vals.data());
+  }
+
+  template<size_t NElem>
+  std::array<val_t, NElem> readNAt(std::array<size_t, NElem> &idxs) {
+    std::array<val_t, NElem> result;
+    readNAt(idxs, result);
+    return result;
+  }
+
+};
+
+template<size_t N>
+thread_local typename TransactionalNumArray<N>::gencas_exec_t TransactionalNumArray<N>::casExecutor_ {};
+
 
 class Timer {
   using sys_time_t = decltype(std::chrono::system_clock::now());
@@ -228,74 +257,171 @@ std::string rightPad(const std::string &strung, size_t N) {
   return oss.str();
 }
 
-template<typename BParams>
+
+template<typename TArray>
+void readerThread(TArray& arrayRef, uint64_t seed, size_t numOps) {
+  std::mt19937 engine {seed};
+  std::uniform_int_distribution<uint64_t> dist {
+    0, TArray::maxSize() - 1
+  };
+  static const size_t kReadSize = 2;
+  std::array<size_t, kReadSize> idxs;
+  std::array<uint64_t, kReadSize> values;
+  std::set<size_t> seen;
+  for (size_t i = 0; i < numOps; i++) {
+    for (;;) {
+      size_t idx1 = dist(engine), idx2 = dist(engine);
+      if (idx1 != idx2) {
+        idxs[0] = idx1;
+        idxs[1] = idx2;
+        break;
+      }
+    }
+    arrayRef.readNAt(idxs, values);
+    break;
+  }
+}
+
+template<typename TArray>
+void writerThread(TArray& arrayRef, uint64_t seed, size_t numOps) {
+  std::mt19937 engine {seed};
+  std::uniform_int_distribution<uint64_t> dist {
+    0, TArray::maxSize() - 1
+  };
+  std::array<std::pair<size_t, uint64_t>, 2> toWrite;
+  for (size_t i = 0; i < numOps; i++) {
+    size_t idx1 {0}, idx2{0};
+    for (;;) {
+      idx1 = dist(engine);
+      idx2 = dist(engine);
+      if (idx1 != idx2) {
+        break;
+      }
+    }
+    toWrite[0].first = idx1;
+    toWrite[0].second = dist(engine);
+    toWrite[1].first = idx2;
+    toWrite[1].second = dist(engine);
+    arrayRef.writeNAt(toWrite);
+  }
+}
+
+
+struct BenchParams {
+  size_t nReaderThreads {8};
+  size_t nWriterThreads {2};
+  size_t getTotalThreads() const {
+    return nReaderThreads + nWriterThreads;
+  }
+  size_t nOpsPerThread {20000};
+  size_t rootSeed {0};
+};
+
+template<typename TArray>
+void runOnce(TArray &numArray, const BenchParams& params) {
+  vector<uint64_t> threadSeeds;
+  {
+    std::mt19937 topEngine {params.rootSeed};
+    std::uniform_int_distribution<uint64_t> dist {
+      0, std::numeric_limits<uint64_t>::max()
+    };
+    for (size_t i = 0; i < params.getTotalThreads();i++) {
+      threadSeeds.push_back(dist(topEngine));
+    }
+  }
+  vector<unique_ptr<thread>> threads;
+  for (size_t i = 0; i < params.nReaderThreads; i++) {
+    uint64_t currentSeed = threadSeeds[i];
+    threads.push_back(unique_ptr<thread>{new thread{[currentSeed, &numArray, params]() {
+      readerThread(numArray, currentSeed, params.nOpsPerThread);
+    }}});
+  }
+  for (size_t i = 0; i < params.nWriterThreads; i++) {
+    size_t threadIdx = i + params.nReaderThreads;
+    uint64_t currentSeed = threadSeeds[threadIdx];
+    threads.push_back(unique_ptr<thread>{new thread{[currentSeed, &numArray, params]() {
+      writerThread(numArray, currentSeed, params.nOpsPerThread);
+
+    }}});
+  }
+  for (auto& t: threads) {
+    t->join();
+  }
+}
+
+template<size_t NAtoms>
+void runTransactional(const BenchParams& params) {
+  TransactionalNumArray<NAtoms> numArray;
+  runOnce(numArray, params);}
+
+
+template<size_t NAtoms, typename TLockType>
+void runLocking(TLockType& lockRef, const BenchParams& params) {
+  LockedNumArray<NAtoms, TLockType> numArray {lockRef};
+  runOnce(numArray, params);
+}
+
+// template<typename BParams>
 void runBattery() {
-  cout << endl;
-  cout << "\tatoms=" << BParams::kNAtoms << "  \treaders=" << BParams::kNReaders
-       << "\twriters=" << BParams::kNWriters << "\tincrPerThread=" << BParams::kIncrPerThread;
-  cout << endl;
+  // cout << endl;
+  // cout  
+  //       << "\tatoms=" << BParams::kNAtoms << endl
+  //       << "\treaders=" << BParams::kNReaders << endl
+  //       << "\twriters=" << BParams::kNWriters << endl
+  //       << "\tops_per_thread=" << BParams::kOpsPerThread << endl;
 
+  cout << endl;
+  static const size_t kNAtoms = 2048;
+  size_t rootSeed = 0;
+  {
+    std::mt19937 rootEngine {std::random_device()()};
+    std::uniform_int_distribution<uint64_t> dist {
+      0, std::numeric_limits<uint64_t>::max()
+    };
+    // rootSeed = dist(rootEngine);
+    rootSeed = 1000;
+  }
+  BenchParams benchParams;
+  benchParams.nOpsPerThread = 5000000;
+  benchParams.nWriterThreads = 8;
+  benchParams.nReaderThreads = 32;
+  benchParams.rootSeed = rootSeed;
   Timer timer;
-  static const size_t kTrials = 5;
-  {
-    uint64_t elapsed {0};
-    auto slock = PThreadSpinLock::create();
-    for (size_t i = 0; i < kTrials; i++) {
-      timer.start();
-      runLockedSmart<decltype(slock), BParams>(slock);
-      timer.stop();
-      elapsed += timer.elapsedNsec();
-    }
-    elapsed /= kTrials;
-    cout << "\t" << rightPad("spinlock elapsed: ", 40) << leftPad(elapsed, 16) << endl;
-    // cout << "\tspinlock elapsed:              " << elapsed << endl;
 
+  {
+    timer.start();
+    runTransactional<kNAtoms>(benchParams);
+    timer.stop();
+    auto elapsed = timer.elapsedNsec();
+    cout << "\t" << rightPad("tsx elapsed: ", 40) << leftPad(elapsed, 16) << endl;
+  }
+  {
+    auto slock = PThreadSpinLock::create();
+    {
+      timer.start();
+      runLocking<kNAtoms, PThreadSpinLock>(slock, benchParams);
+      timer.stop();      
+    }
+    auto elapsed = timer.elapsedNsec();
+    cout << "\t" << rightPad("PThreadSpinLock elapsed: ", 40) << leftPad(elapsed, 16) << endl;
+  }
+  {
+    std::mutex mut;
+    {
+      timer.start();
+      runLocking<kNAtoms, std::mutex>(mut, benchParams);
+      timer.stop();      
+    }
+    auto elapsed = timer.elapsedNsec();
+    cout << "\t" << rightPad("Mutex elapsed: ", 40) << leftPad(elapsed, 16) << endl;
   }  
-  {
-    uint64_t elapsed {0};
-    for (size_t i = 0; i < kTrials; i++) {
-      timer.start();
-      std::mutex mut;
-      runLockedSmart<std::mutex, BParams>(mut);
-      timer.stop();
-      elapsed += timer.elapsedNsec();
-    }
-    elapsed /= kTrials;
-    cout << "\t" << rightPad("mutex elapsed: ", 40) << leftPad(elapsed, 16) << endl;
-  }
-  {
-    uint64_t elapsed {0};
-    for (size_t i = 0; i < kTrials; i++) {
-      timer.start();
-      runTransactional<BParams>();
-      timer.stop();
-      elapsed += timer.elapsedNsec();
-    }
-    elapsed /= kTrials;
-    cout << "\t" << rightPad("transactional elapsed: ", 40) << leftPad(elapsed, 16) << endl;
-  }
 }
 
 
 int main(int argc, char** argv) {
   google::InstallFailureSignalHandler();
-  static const size_t kDefaultWrites = 50000;
-  runBattery<BenchParams<4, 1, 4, kDefaultWrites, kDefaultWrites>>();
-  runBattery<BenchParams<4, 2, 4, kDefaultWrites, kDefaultWrites>>();
-  runBattery<BenchParams<2, 8, 4, kDefaultWrites, kDefaultWrites>>();
-  runBattery<BenchParams<2, 4, 4, kDefaultWrites, kDefaultWrites>>();
-  runBattery<BenchParams<2, 1, 16, kDefaultWrites, kDefaultWrites>>();
-  runBattery<BenchParams<1, 4, 4, kDefaultWrites, kDefaultWrites>>();
-
-  runBattery<BenchParams<8, 1, 4, kDefaultWrites, kDefaultWrites>>();
-  runBattery<BenchParams<8, 2, 4, kDefaultWrites, kDefaultWrites>>();
-  runBattery<BenchParams<8, 1, 4, kDefaultWrites, kDefaultWrites>>();
-  runBattery<BenchParams<8, 2, 4, kDefaultWrites, kDefaultWrites>>();
-
-  runBattery<BenchParams<8, 1, 16, kDefaultWrites, kDefaultWrites>>();
-  runBattery<BenchParams<8, 1, 8, kDefaultWrites, kDefaultWrites>>();
-
-  runBattery<BenchParams<8, 4, 4, kDefaultWrites, kDefaultWrites>>();
+// /  static const size_t kDefaultWrites = 50000;
+  runBattery();
 
   LOG(INFO) << "end";
 }

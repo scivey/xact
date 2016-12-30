@@ -3,6 +3,7 @@ set(HERE ${CMAKE_CURRENT_SOURCE_DIR})
 FILE(GLOB XACT_LIB_SRC
     ${HERE}/*.cpp
     ${HERE}/**/*.cpp
+    ${HERE}/**/*/*.cpp
 )
 
 add_library(xact

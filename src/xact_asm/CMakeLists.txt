@@ -14,11 +14,11 @@ endmacro()
 
 
 set(ASM_SOURCES
-    atomic_u64_multi
-    atomic_u64_single
-    mem_barriers
-    sanity_check
+    util
+    lockable_atomic_u64
     generalized_cas
+    tsx_tests
+    sanity_check
 )
 set(BUILT_ASM_OBJ "")
 
