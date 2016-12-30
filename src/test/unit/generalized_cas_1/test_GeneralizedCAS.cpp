@@ -7,16 +7,16 @@
 #include <atomic>
 
 
-#include "xact/generalized_cas/GeneralizedCAS.h"
-#include "xact/generalized_cas/Operation.h"
-#include "xact/generalized_cas/Precondition.h"
+#include "xact/generalized_cas_1/GeneralizedCAS.h"
+#include "xact/generalized_cas_1/Operation.h"
+#include "xact/generalized_cas_1/Precondition.h"
 #include "xact/AtomicU64.h"
 
 using namespace std;
 using xact::AtomicU64;
 using xact::AtomicU64Inspector;
 
-using namespace xact::generalized_cas;
+using namespace xact::generalized_cas_1;
 
 TEST(TestGeneralizedCAS, TestSimpleCAS1) {
   AtomicU64 atom {20};
@@ -53,7 +53,6 @@ TEST(TestGeneralizedCAS, TestSimpleCAS2) {
   precond[0].typeBlock.conditionType = PreconditionType::NEQ;
   precond[0].target = atomPtr;
   precond[0].arg1 = 10;
-
   // precond[1].typeBlock.conditionType = PreconditionType::LT;
   // precond[1].target = atomPtr;
   // precond[1].arg1 = 30;

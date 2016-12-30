@@ -1,9 +1,9 @@
 #pragma once
 #include <cstddef>
-#include "xact/generalized_cas/Operation.h"
-#include "xact/generalized_cas/Precondition.h"
+#include "xact/generalized_cas_1/Operation.h"
+#include "xact/generalized_cas_1/Precondition.h"
 
-namespace xact { namespace generalized_cas {
+namespace xact { namespace generalized_cas_1 {
 
 struct GeneralizedCASCore {
   PreconditionCore *preconditions {nullptr};
@@ -21,4 +21,4 @@ class GeneralizedCAS {
   bool execute();
 };
 
-}} // xact::generalized_cas
+}} // xact::generalized_cas_1
