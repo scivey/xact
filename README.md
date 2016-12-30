@@ -28,7 +28,7 @@ The N-way API similarly extends plain loads and stores: a reader can take a cons
 See more detailed description [here](/docs/api/n_way.md), and an example [here](/examples/atomic_cas_reader_writer.cpp).
 
 #### The Generalized CAS API
-The N-Way API is a little bit like SIMD: it's doing more or less the same thing at multiple locations.  The Generalized CAS API is more flexible, and enables some operations that don't have analogues in among x86 atomic instructions.
+The N-Way API is a little bit like SIMD: it's doing more or less the same thing at multiple locations.  The Generalized CAS API is more flexible, and enables some operations that don't have analogues among x86 atomic instructions.
 
 This API enables atomic operations like the following logic: 
 ```

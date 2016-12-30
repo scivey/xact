@@ -71,7 +71,8 @@ int main() {
   }
 }
 ```
-(See the [extended, two-thread example here](/examples/atomic_cas_reader_writer.cpp).)
+(See the [extended, two-thread example here](/examples/atomic_cas_reader_writer.cpp))
+
 Above, where calling `compareExchange()` on a single AtomicU64 will either atomically replace its value or fail, calling `compareExchange` on a `FixedAtomicU64Group` will either atomically replace the values of all members or completely fail.
 
 The API allows up to 64-way CAS, but I haven't pushed it too hard yet.  8- and 16- way CAS appear to be reliable.  The practical limit will depend on your particular hardware and workload, and on Intel's magic pixie dust.
