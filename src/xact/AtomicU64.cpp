@@ -45,4 +45,12 @@ bool AtomicU64::fetchAddIfBetween(value_type *result, value_type addBy,
   );
 }
 
+
+AtomicU64Inspector::AtomicU64Inspector(AtomicU64& ref): ref_(ref){}
+
+value_type*  AtomicU64Inspector::getPointer() {
+  return ref_.getPointer();
+}
+
+
 } // xact

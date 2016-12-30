@@ -18,6 +18,7 @@ set(ASM_SOURCES
     atomic_u64_single
     mem_barriers
     sanity_check
+    generalized_cas
 )
 set(BUILT_ASM_OBJ "")
 

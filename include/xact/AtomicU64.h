@@ -7,6 +7,8 @@ namespace xact {
 template<size_t>
 class FixedAtomicU64Group;
 
+class AtomicU64Inspector;
+
 class AtomicU64 {
  public:
   using value_type = uint64_t;
@@ -14,6 +16,8 @@ class AtomicU64 {
 
   template<size_t>
   friend class FixedAtomicU64Group;
+
+  friend class AtomicU64Inspector;
  protected:
   box_t value_;
   value_type* getPointer() {
@@ -30,6 +34,15 @@ class AtomicU64 {
       value_type lowerBoundInclusive, value_type upperBoundExclusive);
   value_type fetchSub(value_type value);
   value_type compareExchange(value_type expected, value_type desired);
+};
+
+
+class AtomicU64Inspector {
+ protected:
+  AtomicU64& ref_;
+ public:
+  AtomicU64Inspector(AtomicU64& ref);
+  typename AtomicU64::value_type* getPointer();
 };
 
 

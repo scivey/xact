@@ -33,6 +33,8 @@ int xact_atomic_fetch_sub_u64_multi(uint64_t **atomics, uint64_t *results, uint6
 int xact_atomic_cas_u64_multi(uint64_t **atomics, const uint64_t *expected,
     const uint64_t *desired, uint8_t n);
 
+int xact_generalized_cas_op(void *preconditions, uint64_t n_preconditions,
+    void *operations, uint64_t n_operations);
 
 #ifdef __cplusplus
 }
