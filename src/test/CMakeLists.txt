@@ -2,6 +2,8 @@ set(HERE ${CMAKE_CURRENT_SOURCE_DIR})
 
 FILE(GLOB XACT_UNIT_TEST_SOURCES
     ${HERE}/unit/*.cpp
+    ${HERE}/unit/**/*.cpp
+
 )
 
 add_executable(run_unit_tests

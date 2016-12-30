@@ -13,11 +13,14 @@ class VectorStoragePolicy {
   std::vector<Operation> operations_;
  public:
   Precondition* getPreconditionStorage();
-  size_t getPreconditionCount();
+  size_t getPreconditionCount() const;
   Operation* getOperationStorage();
-  size_t getOperationCount();
+  size_t getOperationCount() const;
+  void pushPrecondition(const Precondition& condition);
   void pushPrecondition(Precondition&& condition);
+  void pushOperation(const Operation& operation);
   void pushOperation(Operation&& operation);
+
   void clearPreconditionStorage();
   void clearOperationStorage();
 };

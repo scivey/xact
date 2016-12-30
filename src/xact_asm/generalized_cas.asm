@@ -69,14 +69,14 @@ xact_generalized_cas_op:
             mov r9, [r8]    ; load AtomicU64 target of precondition
             mov rax, [r9]    ; load *target into rax
             cmp rax, [r8+16]  ; compare value of *target with precondition arg1
-            jg .precondition_check_success
+            jl .precondition_check_success
             xabort 0
 
         .precondition_gt_check:
             mov r9, [r8]    ; load AtomicU64 target of precondition
             mov rax, [r9]    ; load *target into rax
             cmp rax, [r8+16]  ; compare value of *target with precondition arg1
-            jl .precondition_check_success
+            jg .precondition_check_success
             xabort 0
 
         .precondition_check_success:

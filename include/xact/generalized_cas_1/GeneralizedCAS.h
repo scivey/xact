@@ -17,6 +17,8 @@ class GeneralizedCAS: public TStoragePolicy,
  public:
   using error_policy_t = TErrorPolicy;
   using storage_policy_t = TStoragePolicy;
+  using cond_init_list = std::initializer_list<Precondition>;
+  using op_init_list = std::initializer_list<Operation>;
 
   GeneralizedCAS(){}
 
@@ -25,6 +27,21 @@ class GeneralizedCAS: public TStoragePolicy,
     for (auto&& elem: elems) {
       push(std::forward<decltype(elem)>(elem));
     }
+  }
+
+  GeneralizedCAS(cond_init_list&& elems) {
+    for (auto&& elem: elems) {
+      push(std::forward<decltype(elem)>(elem));
+    }
+  }
+
+  GeneralizedCAS(cond_init_list&& conds, op_init_list&& ops) {
+    for (auto&& cond: conds) {
+      push(std::forward<decltype(cond)>(cond));
+    }
+    for (auto&& op: ops) {
+      push(std::forward<decltype(op)>(op));
+    }    
   }
 
   template<typename TCondOrOpSeq1, typename TCondOrOpSeq2>
@@ -74,8 +91,14 @@ class GeneralizedCAS: public TStoragePolicy,
   void push(Precondition&& condition) {
     this->pushPrecondition(std::forward<Precondition>(condition));
   }
+  void push(const Precondition& cond) {
+    this->pushPrecondition(cond);
+  }
   void push(Operation&& operation) {
     this->pushOperation(std::forward<Operation>(operation));
+  }
+  void push(const Operation& op) {
+    this->pushOperation(op);
   }
   void clear() {
     this->clearPreconditionStorage();
