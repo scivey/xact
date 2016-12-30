@@ -14,22 +14,22 @@ XACT is a work in progress, but already offers features that don't otherwise app
 
 
 ### Features
-XACT currently has two main interfaces.
+XACT currently has two main APIs.
 
-#### The N-Way Interface
-The first interface is an N-way extension of existing x64 atomic operations.
+#### The N-Way API
+The first API is an N-way extension of existing x64 atomic operations.
 
 Like all other mainstream architectures today, x64 only allows atomic compare-and-exchange (CAS) to a single memory location at a time.  Atomic load, store and fetch-add have similar limitations, especially when the addresses are on separate cache lines.
 
-XACT's first interface extends these operations to multiple memory locations at a time.  This enables double compare-and-swap (DCAS), which is a prerequisite for a number of theoretical lock-free data structures.  It also allows for N-way CAS in general: the exact bounds are currently unclear, but 8-way and 16-way CAS are both perfectly functional.
+XACT's first API extends these operations to multiple memory locations at a time.  This enables double compare-and-swap (DCAS), which is a prerequisite for a number of theoretical lock-free data structures.  It also allows for N-way CAS in general: the exact bounds are currently unclear, but 8-way and 16-way CAS are both perfectly functional.
 
-The N-way interface similarly extends plain loads and stores: a reader can take a consistent snapshot of multiple memory addresses, and a writer can atomically store to multiple addresses.
+The N-way API similarly extends plain loads and stores: a reader can take a consistent snapshot of multiple memory addresses, and a writer can atomically store to multiple addresses.
 
 
-#### The Generalized CAS Interface
-The N-Way Interface is a little bit like SIMD: it's doing more or less the same thing at multiple locations.  The Generalized CAS Interface is more flexible, and enables some operations that don't have analogues in among x86 atomic instructions.
+#### The Generalized CAS API
+The N-Way API is a little bit like SIMD: it's doing more or less the same thing at multiple locations.  The Generalized CAS API is more flexible, and enables some operations that don't have analogues in among x86 atomic instructions.
 
-This interface is a generalization of compare-and-swap which allows for multiple predicate-based preconditions, as well as multiple effects when those preconditions are met.
+This API is a generalization of compare-and-swap which allows for multiple predicate-based preconditions, as well as multiple effects when those preconditions are met.
 
 To clarify, think of `cmpxchg` as a combination of one precondition and one effect:
 ```
@@ -39,7 +39,7 @@ To clarify, think of `cmpxchg` as a combination of one precondition and one effe
 [effect]       Store Y at address A.
 ```
 
-The Generalized CAS interface allows for multiple preconditions and effects to be combined, so that the following can be performed as one atomic operation:
+The Generalized CAS API allows for multiple preconditions and effects to be combined, so that the following can be performed as one atomic operation:
 ```
 [precondition] The value at address A is expected to equal 10
 [precondition] The value at address B is expected to be greater than 100
