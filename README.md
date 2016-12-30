@@ -56,7 +56,7 @@ See [here](/examples/atomic_cas_reader_writer.cpp).
 
 ### Generalized CAS Example
 
-See [here](/examples/generalized_cas_single_thread.cpp).
+Currently, the [unit tests](https://github.com/scivey/master/blob/preconditions/src/test/unit/generalized_cas_1/test_GeneralizedCAS.cpp#L87) are your best bet.
 
 ### Benchmarks
 See [here](docs/performance.md) for some recent, preliminary benchmarks.
