@@ -361,16 +361,7 @@ void runLocking(TLockType& lockRef, const BenchParams& params) {
   runOnce(numArray, params);
 }
 
-// template<typename BParams>
 void runBattery() {
-  // cout << endl;
-  // cout  
-  //       << "\tatoms=" << BParams::kNAtoms << endl
-  //       << "\treaders=" << BParams::kNReaders << endl
-  //       << "\twriters=" << BParams::kNWriters << endl
-  //       << "\tops_per_thread=" << BParams::kOpsPerThread << endl;
-
-  cout << endl;
   static const size_t kNAtoms = 2048;
   size_t rootSeed = 0;
   {
@@ -420,7 +411,6 @@ void runBattery() {
 
 int main(int argc, char** argv) {
   google::InstallFailureSignalHandler();
-// /  static const size_t kDefaultWrites = 50000;
   runBattery();
 
   LOG(INFO) << "end";
