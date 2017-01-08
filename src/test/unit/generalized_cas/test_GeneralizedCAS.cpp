@@ -7,7 +7,7 @@
 #include <atomic>
 
 #include "xact/generalized_cas/GeneralizedCAS.h"
-#include "xact/generalized_cas/GeneralizedCASExecutor.h"
+#include "xact/TransactionExecutor.h"
 #include "xact/generalized_cas/Operation.h"
 #include "xact/generalized_cas/Precondition.h"
 #include "xact/detail/asm/util.h"
@@ -20,7 +20,7 @@ using namespace std;
 using xact::LockableAtomicU64;
 using xact::LockableAtomicU64Inspector;
 using xact::TransactionStatus;
-
+using namespace xact;
 using namespace xact::generalized_cas;
 
 uint64_t* getPointer(LockableAtomicU64& atom) {
@@ -28,7 +28,7 @@ uint64_t* getPointer(LockableAtomicU64& atom) {
 }
 
 using gencas_t = GeneralizedCAS<VectorStoragePolicy, ExceptionErrorPolicy>;
-using gencas_exec_t = GeneralizedCASExecutor<DefaultCASExecutorRetryPolicy>;
+using gencas_exec_t = TransactionExecutor<DefaultTransactionRetryPolicy>;
 
 
 TEST(TestGeneralizedCAS, TestSanity1) {

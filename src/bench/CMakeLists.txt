@@ -13,5 +13,8 @@ macro(add_benchmark bench_name)
     target_include_directories(${bench_name} PUBLIC ${COMMON_BENCH_INCLUDE})
 endmacro()
 
-add_benchmark(micro_benchmarks ${HERE}/micro_benchmarks.cpp)
+
+FILE(GLOB MICRO_BENCH_SRC ${HERE}/micro/*.cpp)
+LIST(APPEND MICRO_BENCH_SRC ${HERE}/run_benchmarks.cpp)
+add_benchmark(micro_benchmarks ${MICRO_BENCH_SRC})
 add_benchmark(spinlock_comparison ${HERE}/spinlock_comparison.cpp)

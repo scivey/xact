@@ -14,7 +14,7 @@
 #include "xact/LockableAtomicU64.h"
 #include "xact/generalized_cas/GeneralizedCAS.h"
 #include "xact/generalized_cas/ArrayStoragePolicy.h"
-#include "xact/generalized_cas/GeneralizedCASExecutor.h"
+#include "xact/TransactionExecutor.h"
 #include "xact/detail/macros.h"
 #include "xact/detail/fence.h"
 #include "xact/detail/AlignedBox.h"
@@ -22,7 +22,8 @@
 using namespace std;
 using xact::detail::util::PThreadSpinLock;
 using xact::TransactionStatus;
-
+using xact::TransactionExecutor;
+using xact::DefaultTransactionRetryPolicy;
 
 template<size_t N, typename LockType>
 class LockedNumArray {
@@ -102,8 +103,8 @@ class TransactionalNumArray {
     xact::generalized_cas::ArrayStoragePolicy<N+1>,
     xact::generalized_cas::ExceptionErrorPolicy
   >;  
-  using gencas_exec_t = xact::generalized_cas::GeneralizedCASExecutor<
-    xact::generalized_cas::DefaultCASExecutorRetryPolicy
+  using gencas_exec_t = xact::TransactionExecutor<
+    xact::DefaultTransactionRetryPolicy
   >;
  protected:
   boxed_data_t data_;
