@@ -7,18 +7,21 @@ macro(add_nasm_command src_name obj_name)
     add_custom_command(
         OUTPUT ${DEST}/${obj_name}
         COMMAND ${NASM}
-        ARGS -f elf64 -o ${DEST}/${obj_name} ${HERE}/${src_name}
+        ARGS -I ${HERE} -f elf64 -o ${DEST}/${obj_name} ${HERE}/${src_name}
         DEPENDS ${HERE}/${src_name}
+        WORKING_DIRECTORY ${HERE}
     )
 endmacro()
 
 
 set(ASM_SOURCES
-    util
-    lockable_atomic_u64
     generalized_cas
-    tsx_tests
+    lockable_atomic_u64
+    lockable_atomic_u64_retired
+    rw_seqlock
     sanity_check
+    tsx_tests
+    util
 )
 set(BUILT_ASM_OBJ "")
 

@@ -10,6 +10,8 @@
 
 using namespace std;
 
+// sanity tests for host ABI
+
 TEST(TestASMSanity, TestAdd2) {
   uint64_t x = 100;
   for (uint64_t y = 0; y < 100; y++) {

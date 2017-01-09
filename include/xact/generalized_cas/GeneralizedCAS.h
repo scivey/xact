@@ -105,14 +105,6 @@ class GeneralizedCAS: public TStoragePolicy,
     }
     return casOp.lockAndExecute();
   }
-  TransactionStatus tryLockAndExecute() {
-    auto casOp = buildCASOp();
-    if (casOp.core().nOperations == 0) {
-      this->onEmptyExecution();
-      return TransactionStatus::EMPTY;
-    }
-    return casOp.tryLockAndExecute();
-  }
   void push(Precondition&& condition) {
     this->pushPrecondition(std::forward<Precondition>(condition));
   }

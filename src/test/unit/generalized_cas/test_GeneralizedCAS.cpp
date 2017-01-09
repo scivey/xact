@@ -18,7 +18,7 @@
 
 using namespace std;
 using xact::LockableAtomicU64;
-using xact::LockableAtomicU64Inspector;
+using xact::detail::LockableAtomicU64Inspector;
 using xact::TransactionStatus;
 using namespace xact;
 using namespace xact::generalized_cas;
@@ -79,7 +79,6 @@ TEST(TestGeneralizedCAS, TestSimpleCAS1) {
 
 TEST(TestGeneralizedCAS, TestSimpleCAS2) {
   LockableAtomicU64 atom {20};
-
   gencas_t genc;
   gencas_exec_t executor;  
   genc.push(Precondition::lt(&atom, 30));

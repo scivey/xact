@@ -26,8 +26,8 @@ spinlock_bench: build-all
 	./build/src/bench/spinlock_comparison
 
 BENCHES ?= .*
-micro_bench: build-all
+mbench: build-all
 	./build/src/bench/micro_benchmarks --benchmark_filter=$(BENCHES)
 
-bench: micro_bench spinlock_bench
+bench: mbench spinlock_bench
 

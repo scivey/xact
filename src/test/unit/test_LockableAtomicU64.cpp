@@ -19,13 +19,15 @@
 
 #include "xact/LockableAtomicU64.h"
 #include "xact/TransactionStatus.h"
+#include "xact/TransactionExecutor.h"
 
 using namespace std;
+using namespace xact;
+using xact::detail::LockableAtomicU64Inspector;
 using xact::LockableAtomicU64;
-using xact::LockableAtomicU64Inspector;
 using xact::TransactionStatus;
-
 using namespace xact::generalized_cas;
+using gencas_exec_t = TransactionExecutor<DefaultTransactionRetryPolicy>;
 
 uint64_t* valPtr(LockableAtomicU64 *target) {
   return LockableAtomicU64Inspector(*target).getPointer();
@@ -33,40 +35,67 @@ uint64_t* valPtr(LockableAtomicU64 *target) {
 
 
 
-TEST(TestLockableAtomicU64, TestSingleThreadedCAS2) {
+TEST(TestLockableAtomicU64, TestLoadStoreST) {
+  gencas_exec_t exc;
   LockableAtomicU64 atom {0};
-  atom.store(0);
+  uint64_t value = 0;
+  CHECK(exc.execute(atom.makeLoad(&value)) == TransactionStatus::OK);
+  EXPECT_EQ(0, value);
+  value = 7;
+  CHECK(exc.execute(atom.makeStore(value)) == TransactionStatus::OK);
+  value = 0;
+  CHECK(exc.execute(atom.makeLoad(&value)) == TransactionStatus::OK);
+  XACT_MFENCE_BARRIER();
+  EXPECT_EQ(7, value);
+
+
+  value = 100;
+  CHECK(exc.execute(atom.makeStore(value)) == TransactionStatus::OK);
+  value = 0;
+  CHECK(exc.execute(atom.makeLoad(&value)) == TransactionStatus::OK);
+  EXPECT_EQ(100, value);
+}
+
+TEST(TestLockableAtomicU64, TestSingleThreadedCAS) {
+  LockableAtomicU64 atom {0};
   uint64_t value = 0;
   CHECK(atom.store(value) == TransactionStatus::OK);
   size_t nSuccess {0};
-  while (nSuccess < 50000) {    
+  uint64_t previous = 0;
+  gencas_exec_t executor;
+  const size_t kIterations = 50000;
+  while (nSuccess < kIterations) {    
     for (;;) {
       uint64_t expected = 0;
       TransactionStatus res = TransactionStatus::OK;
       for (;;) {
-        res = atom.load(&expected);
-        if (res == TransactionStatus::TSX_RETRY || res == TransactionStatus::TSX_CONFLICT) {
+        auto loadOp = atom.makeLoad(&expected);
+        auto result = executor.execute(loadOp);
+        if (result == TransactionStatus::TSX_RETRY || res == TransactionStatus::TSX_CONFLICT) {
           continue;
         }
         break;
       }
+      EXPECT_EQ(expected, previous);
       uint64_t desired = expected + 1;
-      res = atom.compareExchange(&expected, desired);
+      res = executor.execute(atom.makeCompareExchange(&expected, desired));
       if (res == TransactionStatus::OK) {
+        previous = desired;
         nSuccess++;
         break;
       }
     }
   }
   uint64_t result;
-  EXPECT_EQ(atom.load(&result), TransactionStatus::OK);
-  EXPECT_EQ(50000, result);
+  auto status = executor.execute(atom.makeLoad(&result));
+  EXPECT_EQ(TransactionStatus::OK, status);
+  EXPECT_EQ(kIterations, result);
 }
 
 
 
 
-TEST(TestLockableAtomicU64, TestMultithreadedStupidCAS1) {
+TEST(TestLockableAtomicU64, TestMultithreadedStupidCAS) {
   LockableAtomicU64 atom {0};
   static const size_t kIncrPerThread = 50000;
   static const size_t kNThreads = 4;
@@ -75,26 +104,24 @@ TEST(TestLockableAtomicU64, TestMultithreadedStupidCAS1) {
   for (size_t i = 0; i < kNThreads; i++) {
     threads.push_back(unique_ptr<thread>{new thread{[&atom]() {
       size_t nSuccess = 0;
+      gencas_exec_t executor;
       while (nSuccess < kIncrPerThread) {
         uint64_t expected = 0;
         for (;;) {
           {
-            auto res = atom.load(&expected);
+            auto res = executor.execute(atom.makeLoad(&expected));
             if (res != TransactionStatus::OK) {
               continue;
             }
           }
-          XACT_MFENCE_BARRIER();
           uint64_t desired = expected + 1;
-          XACT_MFENCE_BARRIER();          
-          auto res = atom.compareExchange(&expected, desired);
+          auto res = executor.execute(atom.makeCompareExchange(&expected, desired));
           if (res == TransactionStatus::OK) {
             nSuccess++;
             break;
           }
         }
       }
-      LOG(INFO) << "nSuccess: " << nSuccess;
     }}});
   }
   XACT_MFENCE_BARRIER();

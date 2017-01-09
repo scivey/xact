@@ -1,8 +1,16 @@
 bits 64
 
-%include "./rw_seqlock_macros.asm"
+%include "rw_seqlock_macros.asm"
+%include "rw_seqlock_dtypes.asm"
 
 section .text
+
+%macro jump_if_locked 2
+    bt qword [%1], 0
+    jc %2
+    bt qword [%1], 1
+    jc %2
+%endmacro 
 
 
 global xact_rw_seqlock_init
@@ -26,7 +34,7 @@ xact_rw_seqlock_try_read_lock:
     .try_loop:
         mov rax, qword [rdi]
         mfence
-        make_lock_mask r13
+        rw_seqlock_make_lock_mask r13
         mov r8, rax
         and r8, r13
         cmp r8, 0
@@ -34,12 +42,12 @@ xact_rw_seqlock_try_read_lock:
 
         ; version + mask
         mov r9, rax
-        make_version_mask r8
+        rw_seqlock_make_version_mask r8
         and r9, r8
 
         xor r12, r12
         or r12, r9
-        make_read_lock_mask r11
+        rw_seqlock_make_read_lock_mask r11
         or r12, r11
 
         lock cmpxchg qword [rdi], r12
@@ -55,11 +63,11 @@ xact_rw_seqlock_try_read_lock:
         jmp .try_loop
 
     .failure:
-        xor rax, rax
+        mov rax, RW_SEQLOCK_TRYLOCK__FAILURE
         jmp .end
 
     .got_lock:
-        mov rax, 1
+        mov rax, RW_SEQLOCK_TRYLOCK__SUCCESS
         jmp .end
 
     .end:
@@ -80,7 +88,7 @@ xact_rw_seqlock_read_lock:
         mov rdi, r12
         call xact_rw_seqlock_try_read_lock
         pop r12
-        cmp rax, LOCK_SUCCESS_RC
+        cmp rax, RW_SEQLOCK_TRYLOCK__SUCCESS
         je .end
         pause
         jmp .retry_loop
@@ -89,7 +97,6 @@ xact_rw_seqlock_read_lock:
         xor rax, rax
         pop r12
         ret
-
 
 
 global xact_rw_seqlock_read_unlock
@@ -101,7 +108,7 @@ xact_rw_seqlock_read_unlock:
 
     .incr_version:
         mov r9, rax
-        make_version_mask r8
+        rw_seqlock_make_version_mask r8
         and r9, r8
         mov qword [rdi], r9
         mfence
@@ -109,6 +116,19 @@ xact_rw_seqlock_read_unlock:
         xor rax, rax
         ret
 
+
+
+
+
+global xact_rw_seqlock_util_make_write_locked_update_from_uint64_t
+xact_rw_seqlock_util_make_write_locked_update_from_uint64_t:
+    .begin:
+        mov rax, qword [rdi]
+        rw_seqlock_make_version_mask r8
+        rw_seqlock_make_write_lock_mask r9
+        and rax, r8
+        or rax, r9
+        ret
 
 
 
@@ -123,24 +143,23 @@ xact_rw_seqlock_try_write_lock:
 
     .try_loop:
         mov rax, qword [rdi]
-        mfence
 
 
         mov r8, rax
-        make_lock_mask r13
+        rw_seqlock_make_lock_mask r13
         and r8, r13
         cmp r8, 0
         jnz .already_locked
 
         ; version + mask
         mov r9, rax
-        make_version_mask r8
+        rw_seqlock_make_version_mask r8
         and r9, r8
         add r9, 1
 
         xor r12, r12
         or r12, r9
-        make_write_lock_mask r11
+        rw_seqlock_make_write_lock_mask r11
         or r12, r11
 
         lock cmpxchg qword [rdi], r12
@@ -157,11 +176,11 @@ xact_rw_seqlock_try_write_lock:
         jmp .try_loop
 
     .failure:
-        xor rax, rax
+        mov rax, RW_SEQLOCK_TRYLOCK__FAILURE
         jmp .end
 
     .got_lock:
-        mov rax, LOCK_SUCCESS_RC
+        mov rax, RW_SEQLOCK_TRYLOCK__SUCCESS
         jmp .end
 
     .end:
@@ -183,7 +202,7 @@ xact_rw_seqlock_write_lock:
         mov rdi, r12
         call xact_rw_seqlock_try_write_lock
         pop r12
-        cmp rax, LOCK_SUCCESS_RC
+        cmp rax, RW_SEQLOCK_TRYLOCK__SUCCESS
         je .end
         pause
         jmp .retry_loop
@@ -202,7 +221,7 @@ xact_rw_seqlock_write_unlock:
         mfence
 
     .incr_version:
-        make_version_mask r8
+        rw_seqlock_make_version_mask r8
         mov r9, rax
         and r9, r8
         add r9, 1
@@ -213,22 +232,45 @@ xact_rw_seqlock_write_unlock:
         ret
 
 
-global xact_rw_seqlock_is_write_locked_from_uint64_t
+
+global xact_rw_seqlock_is_locked_from_uint64_t
     ; (xact_rw_seqlock_t*) -> bool
-xact_rw_seqlock_is_write_locked_from_uint64_t:
+xact_rw_seqlock_is_locked_from_uint64_t:
     .check:
-        make_write_lock_mask r8
+        rw_seqlock_make_lock_mask r8
         and rdi, r8
         cmp rdi, 0
         jz .not_locked
         jmp .locked
 
     .locked:
-        mov rax, 1
+        mov rax, RW_SEQLOCK_IS_LOCKED__TRUE
         jmp .end
 
     .not_locked:
-        xor rax, rax
+        mov rax, RW_SEQLOCK_IS_LOCKED__FALSE
+        jmp .end
+
+    .end:
+        ret
+
+
+global xact_rw_seqlock_is_write_locked_from_uint64_t
+    ; (xact_rw_seqlock_t*) -> bool
+xact_rw_seqlock_is_write_locked_from_uint64_t:
+    .check:
+        rw_seqlock_make_write_lock_mask r8
+        and rdi, r8
+        cmp rdi, 0
+        jz .not_locked
+        jmp .locked
+
+    .locked:
+        mov rax, RW_SEQLOCK_IS_LOCKED__TRUE
+        jmp .end
+
+    .not_locked:
+        mov rax, RW_SEQLOCK_IS_LOCKED__FALSE
         jmp .end
 
     .end:
@@ -238,18 +280,18 @@ global xact_rw_seqlock_is_read_locked_from_uint64_t
     ; (xact_rw_seqlock_t*) -> bool
 xact_rw_seqlock_is_read_locked_from_uint64_t:
     .check:
-        make_read_lock_mask r8
+        rw_seqlock_make_read_lock_mask r8
         and rdi, r8
         cmp rdi, 0
         jz .not_locked
         jmp .locked
 
     .locked:
-        mov rax, 1
+        mov rax, RW_SEQLOCK_IS_LOCKED__TRUE
         jmp .end
 
     .not_locked:
-        xor rax, rax
+        mov rax, RW_SEQLOCK_IS_LOCKED__FALSE
         jmp .end
 
     .end:
@@ -272,14 +314,19 @@ xact_rw_seqlock_is_read_locked:
         call xact_rw_seqlock_is_read_locked_from_uint64_t
         ret
 
+global xact_rw_seqlock_is_locked
+    ; (xact_rw_seqlock_t*) -> bool
+xact_rw_seqlock_is_locked:
+        mov rax, qword [rdi]
+        mov rdi, rax
+        call xact_rw_seqlock_is_locked_from_uint64_t
+
 
 global xact_rw_seqlock_get_version_from_uint64_t
     ; (xact_rw_seqlock_t*) -> bool
 xact_rw_seqlock_get_version_from_uint64_t:
         mov rax, rdi
-        xor rdx, rdx
-        not rdx
-        shr rdx, LOCK_BIT_COUNT
+        rw_seqlock_make_version_mask rdx
         and rax, rdx
         ret
 

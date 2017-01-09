@@ -1,33 +1,17 @@
-%define VERSION_BIT_COUNT 62
-%define LOCK_BIT_COUNT 64 - VERSION_BIT_COUNT
-%define LOCK_SUCCESS_RC 1
+%include "rw_seqlock_dtypes.asm"
 
-%macro jump_if_locked 2
-    bt qword [%1], 0
-    jc %2
-    bt qword [%1], 1
-    jc %2
-%endmacro 
-
-%macro make_version_mask 1
-    xor %1, %1
-    not %1
-    shr %1, LOCK_BIT_COUNT
+%macro rw_seqlock_make_version_mask 1
+    mov %1, qword RW_SEQLOCK_VERSION_MASK
 %endmacro
 
-%macro make_lock_mask 1
-    xor %1, %1
-    not %1
-    shl %1, VERSION_BIT_COUNT
+%macro rw_seqlock_make_lock_mask 1
+    mov %1, qword RW_SEQLOCK_LOCK_MASK
 %endmacro
 
-%macro make_write_lock_mask 1
-    xor %1, %1
-    not %1
-    shl %1, 63
+%macro rw_seqlock_make_write_lock_mask 1
+    mov %1, qword RW_SEQLOCK_WRITE_LOCK_MASK
 %endmacro
 
-%macro make_read_lock_mask 1
-    make_write_lock_mask %1
-    shr %1, 1
+%macro rw_seqlock_make_read_lock_mask 1
+    mov %1, qword RW_SEQLOCK_READ_LOCK_MASK
 %endmacro

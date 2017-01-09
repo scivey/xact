@@ -73,7 +73,12 @@ class TransactionExecutor: public TRetryPolicy {
     if (result != TransactionStatus::OK) {
       result = this->onFailedTransaction(transaction, result, nTries);
     }
+    XACT_RW_BARRIER();
     return result;
+  }
+  template<typename TTransaction>
+  TransactionStatus execute(TTransaction&& transaction) {
+    return execute(transaction);
   }
 };
 

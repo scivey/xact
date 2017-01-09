@@ -5,6 +5,8 @@
 
 namespace xact { namespace generalized_cas {
 
+using xact::detail::LockableAtomicU64Inspector;
+
 OperationCore::OperationCore(const Operation& oper) {
   *this = oper;
 }

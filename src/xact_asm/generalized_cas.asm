@@ -2,9 +2,57 @@ bits 64
 
 section .text
 
+%include "common_tsx_defs.asm"
+%include "misc_macros.asm"
+%include "generalized_cas_dtypes.asm"
+%include "rw_seqlock_dtypes.asm"
+
 ; all global labels define functions following the SystemV AMD64 ABI
 
-global xact_generalized_cas_op_tsx_impl
+
+%macro _gcas_push_preserved 0
+        push r12
+        push r13
+        push r14
+        push r15
+%endmacro
+
+%macro _gcas_pop_preserved 0
+        pop r15
+        pop r14    
+        pop r13
+        pop r12
+%endmacro
+
+
+extern xact_rw_seqlock_is_locked
+
+
+; arg1: register to store pointer to target->seqlock in
+; arg2: expression evaluating to a pointer to xact_lockable_atomic_u64_t
+
+%macro call_lock_check 2
+        mov %1, %2   ; %1 now contains target*
+        add %1, 8    ; %1 now points at target->seqlock*
+        push_scratch_except_rax
+        mov rdi, %1
+        call xact_rw_seqlock_is_locked
+        pop_scratch_except_rax
+%endmacro
+
+
+
+
+
+
+
+
+
+
+
+
+
+%macro _gencas_core_impl_prelude 0
     ; this function does the main work of the generalized CAS operation
     ; (in TSX-mode)
     ; (PreconditionCore* [8b], uint64_t numPreconditions,
@@ -12,36 +60,26 @@ global xact_generalized_cas_op_tsx_impl
     ; 
     ; PreconditionCore and OperationCore are both 32b wide.
     ;
-xact_generalized_cas_op_tsx_impl:
-        push r11
-        push r12
-        push r13
-        push r14
-        push r15
+    .entry:
+        _gcas_push_preserved
         mov r12, rdi ; preconditions
         mov r13, rsi ; nPrecond
         mov r14, rdx ; operations
         mov r15, rcx ; nOper
 
         jmp .x_begin
+%endmacro
 
-    .on_failure:
-        cmp rax, 0
-        je .on_zero_failure
-        jmp .end
 
-    .on_zero_failure:
-        ; TSX sometimes aborts with a status code of 0.
-        ; we signal the caller of this case by zeroing
-        ; upper RAX and setting EAX to 0x00b33f00.
-        ; the higher-level API converts this to
-        ; TransactionStatus::TSX_ZERO_FAILURE.
-        xor rax, rax
-        mov eax, 0x00b33f00
-        jmp .end
 
+; this is a macro so that it can handle both tsx and non-tsx cases.
+; it relies on the _GENCAS_XBEGIN, _GENCAS_XABORT and _GENCAS_XEND
+; macros being defined.
+; the tsx and locked functions define their own versions of these
+; before this macro is substituted
+%macro _gencas_core_impl_body 0
     .x_begin:
-        xbegin .on_failure
+        _GENCAS_XBEGIN(.on_failure)
         mfence
         ; setup lock-check loop over preconditions*
         mov r8, r12  ; preconditions
@@ -51,13 +89,15 @@ xact_generalized_cas_op_tsx_impl:
         je .precondition_lock_checks_succeeded
 
     .check_precondition_locks_step_1:
-        mov r9, [r8]
-        bt qword [r9+8], 0
-        jnc .check_precondition_locks_step_2
-        xabort 1 ; resource locked
+        ; r8 currently contains PreconditionCore*
+        ; dereferencing this results in pointer to xact_lockable_atomic_u64_t
+        call_lock_check r9, precond_target(r8)
+        cmp rax, RW_SEQLOCK_IS_LOCKED__FALSE
+        jz .check_precondition_locks_step_2
+        _GENCAS_XABORT(XSTATUS_RESOURCE_LOCKED)
 
     .check_precondition_locks_step_2:
-        add r8, 32
+        add r8, PRECONDITION_SIZE
         loop .check_precondition_locks_step_1
 
     .precondition_lock_checks_succeeded:
@@ -65,13 +105,15 @@ xact_generalized_cas_op_tsx_impl:
         mov rcx, r15 ; nOper
 
     .check_operation_locks_step_1:
-        mov r9, [r8]
-        bt qword [r9+8], 0
-        jnc .check_operation_locks_step_2
-        xabort 1 ; resource locked
+        ; r8 currently contains OperationCore*
+        ; dereferencing this results in pointer to xact_lockable_atomic_u64_t
+        call_lock_check r9, oper_target(r8)
+        cmp rax, RW_SEQLOCK_IS_LOCKED__FALSE
+        jz .check_operation_locks_step_2
+        _GENCAS_XABORT(XSTATUS_RESOURCE_LOCKED)
 
     .check_operation_locks_step_2:
-        add r8, 32
+        add r8, OPERATION_SIZE
         loop .check_operation_locks_step_1
 
     .lock_checks_succeeded:
@@ -84,49 +126,49 @@ xact_generalized_cas_op_tsx_impl:
         jz .preconditions_succeeded
 
     .precondition_loop_step:
-        mov r9, [r8+8] ; load PreconditionType into r9
-        cmp r9, 0
+        mov r9, precond_type(r8)
+        cmp r9, CONDITION_CODE_ALWAYS_TRUE
         jz .precondition_check_success ; 0 is the null precondition
-        cmp r9, 1
+        cmp r9, CONDITION_CODE_EQ
         jz .precondition_eq_check
-        cmp r9, 2
+        cmp r9, CONDITION_CODE_NEQ
         jz .precondition_neq_check
-        cmp r9, 3
+        cmp r9, CONDITION_CODE_LT
         jz .precondition_lt_check
-        cmp r9, 4
+        cmp r9, CONDITION_CODE_GT
         jz .precondition_gt_check
-        xabort 3 ; invalid precondition
+        _GENCAS_XABORT(XSTATUS_INVALID_PRECONDITION)
 
         .precondition_eq_check:
-            mov r9, [r8]    ; load AtomicU64 target of precondition
-            mov rax, [r9]    ; load *target into rax
-            cmp rax, [r8+16] ; compare value of *target with precondition arg1
+            mov r9, precond_target(r8)      ; r9 = precondition->target*
+            mov rax, [r9]                   ; rax = *target
+            cmp rax, precond_arg1(r8)       ; *target == arg1 ?
             je .precondition_check_success
-            xabort 2 ; precondition failed
+            _GENCAS_XABORT(XSTATUS_PRECONDITION_FAILED)
 
         .precondition_neq_check:
-            mov r9, [r8]    ; load AtomicU64 target of precondition
-            mov rax, [r9]    ; load *target into rax
-            cmp rax, [r8+16]  ; compare value of *target with precondition arg1
+            mov r9, precond_target(r8)
+            mov rax, [r9]
+            cmp rax, precond_arg1(r8)
             jnz .precondition_check_success
-            xabort 2 ; precondition failed
+            _GENCAS_XABORT(XSTATUS_PRECONDITION_FAILED)
 
         .precondition_lt_check:
-            mov r9, [r8]    ; load AtomicU64 target of precondition
-            mov rax, [r9]    ; load *target into rax
-            cmp rax, [r8+16]  ; compare value of *target with precondition arg1
+            mov r9, precond_target(r8)
+            mov rax, [r9]
+            cmp rax, precond_arg1(r8)
             jl .precondition_check_success
-            xabort 2 ; precondition failed
+            _GENCAS_XABORT(XSTATUS_PRECONDITION_FAILED)
 
         .precondition_gt_check:
-            mov r9, [r8]    ; load AtomicU64 target of precondition
-            mov rax, [r9]    ; load *target into rax
-            cmp rax, [r8+16]  ; compare value of *target with precondition arg1
+            mov r9, precond_target(r8)
+            mov rax, [r9]
+            cmp rax, precond_arg1(r8)
             jg .precondition_check_success
-            xabort 2 ; precondition failed
+            _GENCAS_XABORT(XSTATUS_PRECONDITION_FAILED)
 
         .precondition_check_success:
-            add r8, 32 ; incr PreconditionCore list pointer by sizeof(PreconditionCore)
+            add r8, PRECONDITION_SIZE ; incr list pointer
             loop .precondition_loop_step
 
 
@@ -137,54 +179,107 @@ xact_generalized_cas_op_tsx_impl:
         mov rcx, r15
 
     .operation_loop_step:
-        mov r9, [r8+8] ; load OperationType into r8
-        cmp r9, 0
-        jz .operation_end  ; 0 is the null operation (NOOP)
-        cmp r9, 1
+        mov r9, oper_type(r8)
+        cmp r9, OPERATION_CODE_NOOP
+        jz .operation_end
+        cmp r9, OPERATION_CODE_STORE
         jz .operation_store
-        cmp r9, 2
+        cmp r9, OPERATION_CODE_LOAD
         jz .operation_fetch_add
-        cmp r9, 3
+        cmp r9, OPERATION_CODE_FETCH_ADD
         jz .operation_load
-        xabort 4 ; invalid operation
+        _GENCAS_XABORT(XSTATUS_INVALID_OPERATION)
+
 
         .operation_store:
-            mov rax, [r8]    ; load AtomicU64 *target into rax
-            mov r9,  [r8+16] ; load value of arg1
-            mov [rax], r9     ; set *target = arg1
+            mov rax, oper_target(r8)   ; rax = target*
+            mov r9,  oper_arg1(r8)     ; r9 = arg1
+            mov [rax], r9              ; *target = arg1
             jmp .operation_end
 
         .operation_fetch_add:
-            mov rax, [r8]    ; load AtomicU64 *target into rax
-            mov r9, [r8+16]  ; load value of arg1
-            mov r10, [r8+24] ; load value of arg2: a pointer to previous value of *target
-            mov r11, [rax]     ; set r8 = *target
-            mov [r10], r11     ; set *arg2 = *target 
-            add [rax], r9     ; add arg1 to *target
+            mov rax, oper_target(r8)   ; rax = target*
+            mov r9, oper_arg1(r8)      ; r9 = addBy
+            mov r10, oper_arg2(r8)     ; r10 = prevVal*
+            mov r11, [rax]             ; r11 = *target
+            mov [r10], r11             ; *prevVal = *target
+            add [rax], r9              ; *target += addBy
             jmp .operation_end
 
         .operation_load:
-            mov rax, [r8]    ; load AtomicU64 *target into rax
-            mov r9, [r8+16]  ; load value of arg1: a pointer to destination
-            mov r10, [rax]   ; load *target
-            mov [r9], r10    ; set *dest = *target
+            mov rax, oper_target(r8)   ; rax = target*
+            mov r9, oper_arg1(r8)      ; r9 = destination*
+            mov r10, [rax]             ; r10 = *target
+            mov [r9], r10              ; *destination = *target
             jmp .operation_end
 
         .operation_end:
-            add r8, 32 ; incr OperationCore list pointer by sizeof(OperationCore)
+            add r8, OPERATION_SIZE ; incr list pointer
             loop .operation_loop_step
 
     .operations_finished:
-        mov rax, 0
-        xend
+        mov rax, XSTATUS_SUCCESS
+        _GENCAS_XEND
 
     .end:
-        pop r15
-        pop r14
-        pop r13
-        pop r12
-        pop r11
+        _gcas_pop_preserved
         ret
+%endmacro
+
+
+
+
+
+
+%define _GENCAS_XBEGIN(label) xbegin label
+%define _GENCAS_XABORT(status) xabort status
+%define _GENCAS_XEND xend
+global xact_generalized_cas_op_tsx_impl
+xact_generalized_cas_op_tsx_impl:
+    ;
+    ; (PreconditionCore* [8b], uint64_t numPreconditions,
+    ;  OperationCore* [8b], uint64_t numOperations) -> int
+    ; 
+    ; PreconditionCore and OperationCore are both 32b wide.
+    ;
+    _gencas_core_impl_prelude
+
+    .on_failure:
+        handle_tsx_failure .end
+
+    _gencas_core_impl_body
+
+
+
+
+
+
+%define _GENCAS_XBEGIN(label)
+%macro _GENCAS_XABORT 1
+    mov rax, %1
+    jmp .failed
+%endmacro
+%define _GENCAS_XEND xend
+global xact_generalized_cas_op_with_locks_acquired
+    ;
+    ; (PreconditionCore* [8b], uint64_t numPreconditions,
+    ;  OperationCore* [8b], uint64_t numOperations) -> int
+    ; 
+    ; PreconditionCore and OperationCore are both 32b wide.
+    ;
+xact_generalized_cas_op_with_locks_acquired:
+    _gencas_core_impl_prelude
+
+    .on_failure:
+        jmp .end
+
+    _gencas_core_impl_body
+
+
+
+
+
+
 
 
 global xact_generalized_cas_op_tsx_with_retries
@@ -198,40 +293,29 @@ global xact_generalized_cas_op_tsx_with_retries
     ;
 xact_generalized_cas_op_tsx_with_retries:
     .start:
-        push r10
-        push r11
-        push r12
-        push r13
-        push r14
-        push r15
+        _gcas_push_preserved
         mov r11, rdi ; precondition ptr
         mov r12, rsi ; nPrecond
         mov r13, rdx ; operation ptr
         mov r14, rcx ; nOper
 
-        mov r10, r8
+        mov r10, r8 ; numRetries
         mov r15, r8 ; numRetries
 
     .make_call:
         push r10
         push r11
-        push r12
-        push r13
-        push r14
-        push r15
+        _gcas_push_preserved
         mov rdi, r11 ; precond*
         mov rsi, r12 ; nPrecond
         mov rdx, r13 ; operation*
         mov rcx, r14 ; nOper
         call xact_generalized_cas_op_tsx_impl
-        pop r15
-        pop r14
-        pop r13
-        pop r12
+        _gcas_pop_preserved
         pop r11
         pop r10
 
-        cmp rax, 0 ; if call succeeded, we're done
+        cmp rax, XSTATUS_SUCCESS ; if call succeeded, we're done
         je .end
 
         cmp r15, 0 ; do we have any retries left?
@@ -241,179 +325,10 @@ xact_generalized_cas_op_tsx_with_retries:
         sub r15, 1
         pause
         pause
-        pause
         jmp .make_call
 
     .end:
-        pop r15
-        pop r14
-        pop r13
-        pop r12
-        pop r11
-        pop r10
-        ret
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-global xact_generalized_cas_op_with_locks_acquired
-    ;
-    ; (PreconditionCore* [8b], uint64_t numPreconditions,
-    ;  OperationCore* [8b], uint64_t numOperations) -> int
-    ; 
-    ; PreconditionCore and OperationCore are both 32b wide.
-    ;
-xact_generalized_cas_op_with_locks_acquired:
-        push r11
-        push r12
-        push r13
-        push r14
-        push r15
-        mov r12, rdi ; preconditions
-        mov r13, rsi ; nPrecond
-        mov r14, rdx ; operations
-        mov r15, rcx ; nOper
-        jmp .begin
-
-    .failed:
-        jmp .end
-
-    .begin:
-        xor rax, rax
-        ; load pointer to start of preconditions into rdx,
-        ; setup loop for nPrecond iterations.
-        mov r8, r12
-        mov rcx, r13
-
-    .precondition_loop_step:
-        mov r9, [r8+8] ; load PreconditionType into r9
-        cmp r9, 0
-        jz .precondition_check_success ; 0 is the null precondition
-        cmp r9, 1
-        jz .precondition_eq_check
-        cmp r9, 2
-        jz .precondition_neq_check
-        cmp r9, 3
-        jz .precondition_lt_check
-        cmp r9, 4
-        jz .precondition_gt_check
-        mov rax, 3 ; invalid precondition
-        jmp .failed
-
-        .precondition_eq_check:
-            mov r9, [r8]    ; load AtomicU64 target of precondition
-            mov rax, [r9]    ; load *target into rax
-            cmp rax, [r8+16] ; compare value of *target with precondition arg1
-            jz .precondition_check_success
-            mov rax, 2 ; precondition failed
-            jmp .failed
-
-        .precondition_neq_check:
-            mov r9, [r8]    ; load AtomicU64 target of precondition
-            mov rax, [r9]    ; load *target into rax
-            cmp rax, [r8+16]  ; compare value of *target with precondition arg1
-            jnz .precondition_check_success
-            mov rax, 2 ; precondition failed
-            jmp .failed
-
-        .precondition_lt_check:
-            mov r9, [r8]    ; load AtomicU64 target of precondition
-            mov rax, [r9]    ; load *target into rax
-            cmp rax, [r8+16]  ; compare value of *target with precondition arg1
-            jl .precondition_check_success
-            mov rax, 2 ; precondition failed
-            jmp .failed
-
-        .precondition_gt_check:
-            mov r9, [r8]    ; load AtomicU64 target of precondition
-            mov rax, [r9]    ; load *target into rax
-            cmp rax, [r8+16]  ; compare value of *target with precondition arg1
-            jg .precondition_check_success
-            mov rax, 2 ; precondition failed
-            jmp .failed
-
-        .precondition_check_success:
-            add r8, 32 ; incr PreconditionCore list pointer by sizeof(PreconditionCore)
-            loop .precondition_loop_step
-
-
-    .preconditions_succeeded:
-        ; load pointer to start of operations into rdx,
-        ; setup loop for nOper iterations.
-        mov r8, r14
-        mov rcx, r15
-
-    .operation_loop_step:
-        mov r9, [r8+8] ; load OperationType into r8
-        cmp r9, 0
-        jz .operation_end  ; 0 is the null operation (NOOP)
-        cmp r9, 1
-        jz .operation_store
-        cmp r9, 2
-        jz .operation_fetch_add
-        cmp r9, 3
-        jz .operation_load
-        mov rax, 4 ; invalid operation
-        jmp .failed
-
-        .operation_store:
-            mov rax, [r8]    ; load AtomicU64 *target into rax
-            mov r9,  [r8+16] ; load value of arg1
-            mov [rax], r9     ; set *target = arg1
-            jmp .operation_end
-
-        .operation_fetch_add:
-            mov rax, [r8]    ; load AtomicU64 *target into rax
-            mov r9, [r8+16]  ; load value of arg1
-            mov r10, [r8+24] ; load value of arg2: a pointer to previous value of *target
-            mov r11, [rax]     ; set r8 = *target
-            mov [r10], r11     ; set *arg2 = *target 
-            add [rax], r9     ; add arg1 to *target
-            jmp .operation_end
-
-        .operation_load:
-            mov rax, [r8]    ; load AtomicU64 *target into rax
-            mov r9, [r8+16]  ; load value of arg1: a pointer to destination
-            mov r10, [rax]   ; load *target
-            mov [r9], r10    ; set *dest = *target
-            jmp .operation_end
-
-        .operation_end:
-            add r8, 32 ; incr OperationCore list pointer by sizeof(OperationCore)
-            loop .operation_loop_step
-
-    .operations_finished:
-        mov rax, 0
-
-    .end:
-        pop r15
-        pop r14
-        pop r13
-        pop r12
-        pop r11
+        _gcas_pop_preserved
         ret
 
 

@@ -29,7 +29,7 @@ template<size_t N, typename LockType>
 class LockedNumArray {
  public:
   using val_t = uint64_t;
-  using boxed_data_t = std::array<xact::detail::AlignedBox<uint64_t, 64>, N>;
+  using boxed_data_t = std::array<xact::detail::AlignedBox<uint64_t, 16>, N>;
   using lock_t = LockType;
  protected:
   boxed_data_t data_;
@@ -91,18 +91,16 @@ template<size_t N>
 class TransactionalNumArray {
  public:
   using val_t = uint64_t;
-  using boxed_data_t = std::array<xact::detail::AlignedBox<
-    xact::LockableAtomicU64, 64
-  >, N>;
+  using boxed_data_t = std::array<xact::LockableAtomicU64, N>;
+
+  // using boxed_data_t = std::array<xact::detail::AlignedBox<
+  //   xact::LockableAtomicU64, 64
+  // >, N>;
   using Operation = xact::generalized_cas::Operation;
   using gencas_t = xact::generalized_cas::GeneralizedCAS<
     xact::generalized_cas::ArrayStoragePolicy<16>,
     xact::generalized_cas::ExceptionErrorPolicy
   >;
-  using gencas_init_t = xact::generalized_cas::GeneralizedCAS<
-    xact::generalized_cas::ArrayStoragePolicy<N+1>,
-    xact::generalized_cas::ExceptionErrorPolicy
-  >;  
   using gencas_exec_t = xact::TransactionExecutor<
     xact::DefaultTransactionRetryPolicy
   >;
@@ -114,9 +112,9 @@ class TransactionalNumArray {
     return N;
   }
   TransactionalNumArray() {
-    gencas_init_t transaction;
+    gencas_exec_t executor;
     for (size_t i = 0; i < N; i++) {
-      auto result = data_[i].value.store(0);
+      auto result = executor.execute(data_[i].makeStore(0));
       CHECK(result == TransactionStatus::OK)
         << "failed TransactionStatus: " << static_cast<uint64_t>(result);
     }
@@ -128,7 +126,7 @@ class TransactionalNumArray {
       std::pair<size_t, val_t> current = *pairs;
       ++pairs;
       transaction.push(
-        Operation::store(&data_[current.first].value, current.second)
+        Operation::store(&data_[current.first], current.second)
       );
     }
     TransactionStatus result = casExecutor_.execute(transaction);
@@ -140,7 +138,7 @@ class TransactionalNumArray {
     for (size_t i = 0; i < nIdxs; i++) {
       size_t idx = *idxs;
       transaction.push(
-        Operation::load(&data_[idx].value, result)
+        Operation::load(&data_[idx], result)
       );
       ++idxs;
       ++result;
@@ -152,7 +150,7 @@ class TransactionalNumArray {
     gencas_t transaction {
       {},
       {
-        Operation::store(&data_[idx].value, val)
+        Operation::store(&data_[idx], val)
       }
     };
     CHECK(casExecutor_.execute(transaction) == TransactionStatus::OK);
@@ -168,7 +166,7 @@ class TransactionalNumArray {
     gencas_t transaction {
       {},
       {
-        Operation::load(&data_[idx].value, &result)
+        Operation::load(&data_[idx], &result)
       }
     };
     CHECK(casExecutor_.execute(transaction) == TransactionStatus::OK);
@@ -370,13 +368,13 @@ void runBattery() {
     std::uniform_int_distribution<uint64_t> dist {
       0, std::numeric_limits<uint64_t>::max()
     };
-    // rootSeed = dist(rootEngine);
-    rootSeed = 1000;
+    rootSeed = dist(rootEngine);
+    // rootSeed = 1000;
   }
   BenchParams benchParams;
   benchParams.nOpsPerThread = 5000000;
-  benchParams.nWriterThreads = 8;
-  benchParams.nReaderThreads = 32;
+  benchParams.nWriterThreads = 7;
+  benchParams.nReaderThreads = 1;
   benchParams.rootSeed = rootSeed;
   Timer timer;
 
