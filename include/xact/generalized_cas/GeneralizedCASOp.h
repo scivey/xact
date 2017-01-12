@@ -42,7 +42,7 @@ class GeneralizedCASOp {
   }
 
   inline TransactionStatus executeWithLocksHeld() {
-    auto retCode = xact_generalized_cas_op_with_locks_acquired(
+    auto retCode = xact_generalized_cas_op_v1_with_locks_acquired(
       core_.preconditions, core_.nPreconditions,
       core_.operations, core_.nOperations
     );

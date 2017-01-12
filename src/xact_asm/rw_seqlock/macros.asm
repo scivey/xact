@@ -1,4 +1,4 @@
-%include "rw_seqlock_dtypes.asm"
+%include "rw_seqlock/dtypes.asm"
 
 %macro rw_seqlock_make_version_mask 1
     mov %1, qword RW_SEQLOCK_VERSION_MASK

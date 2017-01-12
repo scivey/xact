@@ -66,8 +66,9 @@ class GeneralizedCAS: public TStoragePolicy,
   bool empty() const {
     return !hasOperations() && !hasPreconditions();
   }
- protected:
-  GeneralizedCASOp buildCASOp() {
+
+  // public for testing
+  GeneralizedCASOp buildCASOpPrivate() {
     auto casOp = GeneralizedCASOp();
     auto& opCore = casOp.core();
     Precondition* preconditions = this->getPreconditionStorage();
@@ -87,9 +88,8 @@ class GeneralizedCAS: public TStoragePolicy,
     opCore.nOperations = this->getOperationCount();
     return casOp;
   }
- public:
   inline TransactionStatus execute() {
-    auto casOp = buildCASOp();
+    auto casOp = buildCASOpPrivate();
     if (casOp.core().nOperations == 0) {
       this->onEmptyExecution();
       return TransactionStatus::EMPTY;      
@@ -98,7 +98,7 @@ class GeneralizedCAS: public TStoragePolicy,
     return result;
   }
   TransactionStatus lockAndExecute() {
-    auto casOp = buildCASOp();
+    auto casOp = buildCASOpPrivate();
     if (casOp.core().nOperations == 0) {
       this->onEmptyExecution();
       return TransactionStatus::EMPTY;

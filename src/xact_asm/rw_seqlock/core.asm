@@ -1,7 +1,7 @@
 bits 64
 
-%include "rw_seqlock_macros.asm"
-%include "rw_seqlock_dtypes.asm"
+%include "rw_seqlock/macros.asm"
+%include "rw_seqlock/dtypes.asm"
 
 section .text
 

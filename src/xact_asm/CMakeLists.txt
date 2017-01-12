@@ -15,19 +15,23 @@ endmacro()
 
 
 set(ASM_SOURCES
-    generalized_cas
-    lockable_atomic_u64
-    lockable_atomic_u64_retired
-    rw_seqlock
-    sanity_check
-    tsx_tests
-    util
+    generalized_cas/core_v1
+    generalized_cas/core_v2
+    generalized_cas/retry
+    lockable_atomic_u64/core
+    lockable_atomic_u64/retired
+    misc/util
+    misc/tsx_tests
+    misc/sanity_check
+    multi/core
+    rw_seqlock/core
 )
 set(BUILT_ASM_OBJ "")
 
 foreach(asm_src ${ASM_SOURCES})
-    add_nasm_command(${asm_src}.asm xact_${asm_src}.o)
-    LIST(APPEND BUILT_ASM_OBJ ${DEST}/xact_${asm_src}.o)
+    string(REPLACE "/" "_" asm_src_out "${asm_src}")
+    add_nasm_command(${asm_src}.asm xact_${asm_src_out}.o)
+    LIST(APPEND BUILT_ASM_OBJ ${DEST}/xact_${asm_src_out}.o)
 endforeach()
 
 add_library(xact_asm ${BUILT_ASM_OBJ})

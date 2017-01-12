@@ -2,9 +2,9 @@ bits 64
 
 section .text
 
-%include "common_tsx_defs.asm"
-%include "rw_seqlock_dtypes.asm"
-%include "rw_seqlock_macros.asm"
+%include "common/tsx_defs.asm"
+%include "rw_seqlock/dtypes.asm"
+%include "rw_seqlock/macros.asm"
 
 
 %macro _lu64_push_common_registers 0
