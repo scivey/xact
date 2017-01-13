@@ -1,4 +1,10 @@
 #include <random>
+#include <functional>
+#include <vector>
+#include <atomic>
+#include <thread>
+#include <memory>
+#include <glog/logging.h>
 #include <gtest/gtest.h>
 #include "xact/detail/RWSeqLock.h"
 
@@ -92,4 +98,88 @@ TEST(TestRWSeqLock, TestStressST) {
       EXPECT_FALSE(slock.isLocked());
     }
   }
+}
+
+class ThreadGroup {
+  using func_t = std::function<void(size_t)>;
+ protected:
+  size_t size_ {0};
+  std::atomic<size_t> startCount_ {0};
+  std::atomic<size_t> stopCount_ {0};
+  func_t func_ {};
+  std::vector<std::thread> threads_;
+  std::atomic<bool> joined_ {false};
+  ThreadGroup(size_t size, func_t func): size_(size), func_(func) {}
+  void start() {
+    for (size_t i = 0; i < size_; i++) {
+      threads_.emplace_back([this, i]() {
+        size_t current = startCount_.fetch_add(1);
+        while (current != startCount_.load()) {
+          current = startCount_.load();
+        }
+        func_(i);
+        stopCount_.fetch_add(1);
+      });
+    }
+  }
+ public:
+  static std::shared_ptr<ThreadGroup> createShared(size_t n, func_t func) {
+    std::shared_ptr<ThreadGroup> result {new ThreadGroup {n, func}};
+    result->start();
+    return result;
+  }
+  void join() {
+    CHECK(!joined_.load());
+    joined_ = true;
+    while (stopCount_.load() != size_) {
+      ;
+    }
+    for (auto& t: threads_) {
+      t.join();
+    }
+  }
+  ~ThreadGroup() {
+    if (!joined_) {
+      join();
+    }
+  }
+};
+
+TEST(TestRWSeqLock, TestStressMT) {
+  RWSeqLock slock;
+  size_t expectedVersion = 0;
+  static const size_t kNThreads = 8;
+  static const size_t kNOpsPerThread = 10000;
+  std::atomic<size_t> numAcquiredAtom {0};
+  size_t numAcquiredBare {0};
+  auto threads = ThreadGroup::createShared(kNThreads,
+    [&slock, &numAcquiredAtom, &numAcquiredBare](size_t threadIdx) {
+      const bool isWriter = threadIdx % 2 == 1;
+      for (size_t i = 0; i < kNOpsPerThread; i++) {
+        for (;;) {
+          bool success {false};
+          if (isWriter && slock.tryWriteLock()) {
+            success = true;
+            numAcquiredBare++;
+            slock.writeUnlock();
+          } else if (!isWriter && slock.tryReadLock()) {
+            success = true;
+            numAcquiredBare++;            
+            slock.readUnlock();
+          }
+          if (success) {
+            numAcquiredAtom.fetch_add(1);
+            break;
+          }
+        }
+      }
+    }
+  );
+  threads->join();
+  const size_t kExpectedAcquires = kNThreads * kNOpsPerThread;
+
+  EXPECT_EQ(kExpectedAcquires, numAcquiredAtom.load());
+  EXPECT_EQ(kExpectedAcquires, numAcquiredBare);
+  const size_t kExpectedVersion = (kNThreads / 2) * kNOpsPerThread * 2;
+  EXPECT_EQ(kExpectedVersion, slock.getVersion());
 }
