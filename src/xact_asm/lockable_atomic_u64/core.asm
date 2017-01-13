@@ -8,7 +8,7 @@ section .text
 
 
 %macro _lu64_push_common_registers 0
-        push r11
+        push rbx
         push r12
         push r13
         push r14
@@ -20,7 +20,7 @@ section .text
         pop r14    
         pop r13
         pop r12
-        pop r11
+        pop rbx
 %endmacro
 
 
@@ -170,12 +170,12 @@ xact_lockable_atomic_u64_compare_exchange_cmpxchg16b:
     .cas_loop:
         mov r15, [rdi+8] ;  target->slock
         mov r8, r15
+
         rw_seqlock_make_version_mask r9
         and r8, r9
         mov r10, r8 ; r10 <- old version
         add r8, 1   ; r8  <- new version
         ; r8 now contains new version and 00 lock bits
-
         ; [rdx:rax] = expected = [old_version[62]:00[2]:expected_val[64]]
         mov rdx, r10
         mov rax, [r12]

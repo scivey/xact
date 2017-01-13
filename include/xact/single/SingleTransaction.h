@@ -153,6 +153,7 @@ class SingleTransaction {
   }
 
   inline TransactionStatus executeCompareExchange(UseTSX useTsx) {
+    // return executeOldSlowCompareExchange(useTsx);
     auto rc = xact_lockable_atomic_u64_compare_exchange_cmpxchg16b(
       params_.target, (uint64_t*) params_.arg1, params_.arg2
     );

@@ -93,12 +93,39 @@ TEST(TestLockableAtomicU64, TestSingleThreadedCAS) {
 }
 
 
+TEST(TestLockableAtomicU64, TestSTSingleCASFailure) {
+  LockableAtomicU64 atom {0};
+  uint64_t value = 0;
+  uint64_t expected {7};
+  gencas_exec_t executor;
+  auto op = atom.makeCompareExchange(&expected, value);
+  EXPECT_EQ(TransactionStatus::PRECONDITION_FAILED, op.execute());
+  EXPECT_EQ(0, expected);
+  EXPECT_EQ(TransactionStatus::OK, atom.makeStore(50).execute());
+  expected = 26;
+  value = 10;
+  auto op2 = atom.makeCompareExchange(&expected, value);
+  EXPECT_EQ(TransactionStatus::PRECONDITION_FAILED, op2.execute());
+  EXPECT_EQ(50, expected);
+  expected = 10;
+  EXPECT_EQ(TransactionStatus::OK, atom.makeLoad(&expected).execute());
+  EXPECT_EQ(50, expected);
+  value = 51;
+  EXPECT_EQ(TransactionStatus::OK, atom.makeCompareExchange(&expected, value).execute());
+  EXPECT_EQ(50, expected);
+  EXPECT_EQ(51, value);
+  value = 0;
+  EXPECT_EQ(TransactionStatus::OK, atom.makeLoad(&value).execute());
+  EXPECT_EQ(51, value);
+}
+
+
 
 
 TEST(TestLockableAtomicU64, TestMultithreadedStupidCAS) {
   LockableAtomicU64 atom {0};
   static const size_t kIncrPerThread = 50000;
-  static const size_t kNThreads = 4;
+  static const size_t kNThreads = 1;
   XACT_MFENCE_BARRIER();
   vector<unique_ptr<thread>> threads;
   for (size_t i = 0; i < kNThreads; i++) {
@@ -108,14 +135,11 @@ TEST(TestLockableAtomicU64, TestMultithreadedStupidCAS) {
       while (nSuccess < kIncrPerThread) {
         uint64_t expected = 0;
         for (;;) {
-          {
-            auto res = executor.execute(atom.makeLoad(&expected));
-            if (res != TransactionStatus::OK) {
-              continue;
-            }
-          }
+          auto res = atom.makeLoad(&expected).execute();
+          EXPECT_EQ(TransactionStatus::OK, res);
           uint64_t desired = expected + 1;
-          auto res = executor.execute(atom.makeCompareExchange(&expected, desired));
+          auto casOp = atom.makeCompareExchange(&expected, desired);
+          res = casOp.execute();
           if (res == TransactionStatus::OK) {
             nSuccess++;
             break;
