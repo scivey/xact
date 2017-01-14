@@ -28,7 +28,7 @@ global xact_lockable_atomic_u64_multi_load_2_mvcc
         ; (Argument *marg1, Argument *marg2) -> uint64_t
 xact_lockable_atomic_u64_multi_load_2_mvcc:
     .begin:
-        _l64_push_common_registers
+        _lu64_push_common_registers
         mov r8, rdi ; marg1
         mov r9, rsi ; marg2
         rw_seqlock_make_write_lock_mask rdx
@@ -117,4 +117,85 @@ xact_lockable_atomic_u64_multi_load_2_mvcc:
 
     .end:
         _lu64_pop_common_registers
+        ret
+
+
+
+
+global xact_lockable_atomic_u64_multi_store_2_tsx
+        ; using Argument = MultiTransaction::Argument
+        ; (Argument *marg1, Argument *marg2) -> uint64_t
+xact_lockable_atomic_u64_multi_store_2_tsx:
+    .begin:
+        _lu64_push_common_registers
+        mov r8, rdi ; marg1
+        mov r9, rsi ; marg2
+        rw_seqlock_make_lock_mask rdx
+        rw_seqlock_make_version_mask rcx
+        jmp .x_begin
+
+    .on_failure:
+        handle_tsx_failure .end
+
+    .resource_locked:
+        xabort XSTATUS_RESOURCE_LOCKED
+
+    .x_begin:
+        xbegin .on_failure
+
+    .check_locks:
+        mov r10, multi_arg_target(r8)
+        mov rbx, multi_arg_target(r9)
+
+        mov r11, qword [r10+8] ; r11 <- target1->slock->value (1st)
+        mov r13, qword [rbx+8] ; r13 <- target2->slock->value (1st)
+
+        ; first step: check that neither target is locked
+        mov r12, r11
+        and r12, rdx
+        cmp r12, 0
+        jnz .resource_locked
+
+        mov r12, r13
+        and r12, rdx
+        cmp r12, 0
+        jnz .resource_locked
+
+    .do_stores:
+        mov r12, multi_arg_arg1(r8)
+        mov qword [r10], r12
+        mov r12, multi_arg_arg1(r9)
+        mov qword [rbx], r12
+        xor rax, rax
+        xend
+
+    .end:
+        _lu64_pop_common_registers
+        ret
+
+
+
+
+
+global xact_lockable_atomic_u64_multi_store_2_mvcc_with_locks_held
+        ; using Argument = MultiTransaction::Argument
+        ; (Argument *marg1, Argument *marg2) -> uint64_t
+xact_lockable_atomic_u64_multi_store_2_mvcc_with_locks_held:
+    .begin:
+        _lu64_push_common_registers
+        mov r8, rdi ; marg1
+        mov r9, rsi ; marg2
+
+    .do_store:
+        mov r10, multi_arg_target(r8)
+        mov r11, multi_arg_arg1(r8)
+        mov qword [r10], r11
+
+        mov r10, multi_arg_target(r9)
+        mov r11, multi_arg_arg1(r9)
+        mov qword [r10], r11
+        xor rax, rax
+    .end:
+        _lu64_pop_common_registers
+        ret
 
