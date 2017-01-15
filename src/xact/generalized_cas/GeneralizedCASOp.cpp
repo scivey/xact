@@ -6,6 +6,7 @@
 #include "xact/TransactionStatus.h"
 #include "xact/LockableAtomicU64.h"
 #include "xact/detail/util/ScopeGuard.h"
+#include "xact/detail/SmallVector.h"
 
 #include <glog/logging.h>
 #include <set>
@@ -16,7 +17,8 @@ namespace xact { namespace generalized_cas {
 
 TransactionStatus GeneralizedCASOp::lockAndExecute() {
   using atom_t = xact_lockable_atomic_u64_t;
-  std::vector<atom_t*> atoms;
+  using atom_vec = xact::detail::SmallVector<atom_t*>;
+  atom_vec atoms;
   atoms.reserve(core_.nPreconditions + core_.nOperations);
 
   for (size_t i = 0; i < core_.nPreconditions; i++) {

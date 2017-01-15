@@ -2,6 +2,7 @@
 
 #include "xact/generalized_cas/Operation.h"
 #include "xact/generalized_cas/Precondition.h"
+#include "xact/detail/SmallVector.h"
 #include <cstddef>
 #include <vector>
 
@@ -9,8 +10,8 @@ namespace xact { namespace generalized_cas {
 
 class VectorStoragePolicy {
  protected:
-  std::vector<Precondition> preconditions_;
-  std::vector<Operation> operations_;
+  detail::SmallVector<Precondition> preconditions_;
+  detail::SmallVector<Operation> operations_;
  public:
   Precondition* getPreconditionStorage();
   size_t getPreconditionCount() const;

@@ -5,6 +5,7 @@
 
 #include "xact/LockableAtomicU64.h"
 #include "xact/detail/RWSeqLock.h"
+#include "xact/detail/SmallVector.h"
 
 namespace xact { namespace detail {
 
@@ -84,7 +85,7 @@ class LockManager {
   using atom_t = xact_lockable_atomic_u64_t;
 
  protected:
-  using atom_vec = std::vector<atom_t*>;
+  using atom_vec = xact::detail::SmallVector<atom_t*>;
   atom_vec sortedDistinctAtoms_;
 
   // precondition: atom_vec must be sorted and unique.
@@ -94,9 +95,9 @@ class LockManager {
 
  public:
   static LockManager create(atom_t **atomPtrs, size_t nAtoms) {
-    std::vector<atom_t*> atoms;
+    atom_vec atoms;
     atoms.reserve(nAtoms);
-    std::vector<atom_t*> distinctAtoms;
+    atom_vec distinctAtoms;
     distinctAtoms.reserve(nAtoms);
     for (size_t i = 0; nAtoms; i++) {
       atom_t **currPtr = atomPtrs + i;
