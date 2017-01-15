@@ -6,6 +6,7 @@
 #include "xact/detail/asm/lockable_atomic_u64_ops.h"
 #include "xact/detail/asm/multi.h"
 #include "xact/detail/asm/multi_ops.h"
+#include "xact/detail/SmallVector.h"
 #include "xact/detail/named_types.h"
 
 namespace xact { namespace multi {
@@ -26,7 +27,7 @@ class MultiTransaction {
 
   struct Params {
     Type ttype {Type::NOOP};
-    std::vector<Argument> arguments;
+    detail::SmallVector<Argument> arguments;
   };
   Params params_;
 
