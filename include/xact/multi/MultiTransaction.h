@@ -1,9 +1,12 @@
 #pragma once
 #include <tuple>
+#include <glog/logging.h>
+#include "xact/TransactionStatus.h"
 #include "xact/detail/asm/lockable_atomic_u64.h"
 #include "xact/detail/asm/lockable_atomic_u64_ops.h"
-#include "xact/detail/NamedType.h"
-#include "xact/TransactionStatus.h"
+#include "xact/detail/asm/multi.h"
+#include "xact/detail/asm/multi_ops.h"
+#include "xact/detail/named_types.h"
 
 namespace xact { namespace multi {
 
@@ -18,11 +21,7 @@ class MultiTransaction {
   using atom_t = xact_lockable_atomic_u64_t;
 
  protected:
-  struct Argument {
-    atom_t *target {nullptr};
-    uint64_t arg1;
-    uint64_t arg2;
-  };
+  using Argument = xact_multi_atomic_op_argument_t;
   static_assert(sizeof(Argument) == 24, "Argument is 24 bytes wide");
 
   struct Params {
@@ -39,7 +38,7 @@ class MultiTransaction {
   template<typename TContainer,
     typename = typename std::enable_if<
       std::is_same<
-        decltype(std::declval<TContainer>().front()),
+        typename TContainer::value_type,
         load_param_t
       >::value,
       TContainer>::type>
@@ -96,6 +95,54 @@ class MultiTransaction {
       instance.params_.arguments.emplace_back(arg);
     }
     return instance;
+  }
+
+ protected:
+  using UseTSX = detail::UseTSX;
+
+  inline TransactionStatus executeStore(UseTSX useTsx) {
+    auto& args = params_.arguments;
+    CHECK(args.size() == 2);
+    if (useTsx.value()) {
+      auto rc = xact_multi_u64_store_2_tsx(&args[0], &args[1]);
+      return transactionStatusFromRax(rc);
+    } else {
+      auto rc = xact_multi_u64_store_2_mvcc_with_locks_held(&args[0], &args[1]);
+      return transactionStatusFromAbortCode(rc);
+    }
+  }
+  inline TransactionStatus executeLoad(UseTSX useTsx) {
+    auto& args = params_.arguments;
+    CHECK(args.size() == 2);
+    auto rc = xact_multi_u64_load_2_mvcc(&args[0], &args[1]);
+    return transactionStatusFromAbortCode(rc);
+  }
+  inline TransactionStatus executeCompareExchange(UseTSX useTsx) {
+    throw std::runtime_error("bad!");
+  }
+
+  inline TransactionStatus pExecute(UseTSX useTsx) {
+    switch(params_.ttype) {
+      case Type::NOOP:
+        return TransactionStatus::EMPTY;
+      case Type::STORE:
+        return executeStore(useTsx);
+      case Type::LOAD:
+        return executeLoad(useTsx);
+      case Type::COMPARE_EXCHANGE:
+        return executeCompareExchange(useTsx);
+    };
+  }
+
+ public:
+  inline TransactionStatus execute() {
+    return pExecute(UseTSX{true});
+  }
+  inline TransactionStatus executeWithLocksHeld() {
+    return pExecute(UseTSX{false});
+  }
+  inline TransactionStatus lockAndExecute() {
+    return TransactionStatus::EMPTY;
   }
 
 

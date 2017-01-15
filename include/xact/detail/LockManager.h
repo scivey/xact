@@ -151,7 +151,7 @@ class LockManager {
     slocker.unlockAll(
       sortedDistinctAtoms_.data(), sortedDistinctAtoms_.size()
     );
-  }  
+  }
 
 };
 

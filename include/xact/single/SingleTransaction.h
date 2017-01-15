@@ -1,7 +1,7 @@
 #pragma once
 #include "xact/detail/asm/lockable_atomic_u64.h"
 #include "xact/detail/asm/lockable_atomic_u64_ops.h"
-#include "xact/detail/NamedType.h"
+#include "xact/detail/named_types.h"
 #include "xact/detail/util/ScopeGuard.h"
 #include "xact/detail/RWSeqLock.h"
 #include "xact/TransactionStatus.h"
@@ -82,59 +82,15 @@ class SingleTransaction {
 
  protected:
 
-  using UseTSX = detail::NamedType<bool, struct UseTSXTag>;
+  using UseTSX = detail::UseTSX;
   using RWSeqLockRef = detail::RWSeqLockRef;
 
-  inline TransactionStatus oldSlowExecuteStore(UseTSX useTsx) {
-    if (useTsx.value()) {
-      return transactionStatusFromRax(
-        xact_lockable_atomic_u64_store_tsx(params_.target, params_.arg1)
-      );
-    }
-    throw std::runtime_error("bad!");
-  }
   inline TransactionStatus executeStore(UseTSX useTsx) {
     return transactionStatusFromAbortCode(
       xact_lockable_atomic_u64_store_cmpxchg16b(params_.target, params_.arg1)
     );
-    // if (useTsx.value()) {
-    //   return transactionStatusFromRax(
-    //     xact_lockable_atomic_u64_store_tsx(params_.target, params_.arg1)
-    //   );
-    // }
-    // throw std::runtime_error("bad!");
   }
 
-  inline TransactionStatus oldSlowExecuteLoad1(UseTSX useTsx) {
-    return transactionStatusFromRax(xact_lockable_atomic_u64_load_tsx(
-      params_.target, (uint64_t*) params_.arg1
-    ));
-  }
-  inline TransactionStatus oldSlowExecuteLoad2(UseTSX useTsx) {
-    ((void) useTsx);
-    auto target = params_.target;
-    RWSeqLockRef slockRef {&target->seqlock};
-    for (;;) {
-      auto slockVal1 = slockRef.getValue();
-      XACT_RW_BARRIER();
-      if (slockVal1.isWriteLocked()) {
-        return TransactionStatus::RESOURCE_LOCKED;
-      }
-      uint64_t atomValue = xact_lockable_atomic_u64_load_raw_value_dangerously(target);
-      XACT_RW_BARRIER();
-      auto slockVal2 = slockRef.getValue();
-      if (slockVal2.isWriteLocked()) {
-        return TransactionStatus::RESOURCE_LOCKED;
-      }
-      if (slockVal1.getVersion() != slockVal2.getVersion()) {
-        // we made an inconsistent read
-        continue;
-      }
-      auto resultPtr = (uint64_t*) params_.arg1;
-      *resultPtr = atomValue;
-      return TransactionStatus::OK;      
-    }
-  }
   inline TransactionStatus executeLoad(UseTSX useTsx) {
     ((void) useTsx);
     auto target = params_.target;
@@ -143,37 +99,16 @@ class SingleTransaction {
     return transactionStatusFromAbortCode(rc);
   }
 
-  inline TransactionStatus executeOldSlowCompareExchange(UseTSX useTsx) {
-    if (useTsx.value()) {
-      return transactionStatusFromRax(xact_lockable_atomic_u64_compare_exchange(
-        params_.target, (uint64_t*) params_.arg1, params_.arg2
-      ));
-    }
-    throw std::runtime_error("bad!");
-  }
-
   inline TransactionStatus executeCompareExchange(UseTSX useTsx) {
-    // return executeOldSlowCompareExchange(useTsx);
+    ((void) useTsx);
     auto rc = xact_lockable_atomic_u64_compare_exchange_cmpxchg16b(
       params_.target, (uint64_t*) params_.arg1, params_.arg2
     );
     return transactionStatusFromAbortCode(rc);
   }
 
-  inline TransactionStatus oldSlowExecuteFetchAdd(UseTSX useTsx) {
-    if (useTsx.value()) {
-      return transactionStatusFromRax(
-        xact_lockable_atomic_u64_fetch_add_tsx(
-          params_.target,
-          (uint64_t*) params_.arg1,
-          params_.arg2
-        )
-      );
-    }
-    throw std::runtime_error("bad!");
-  }
-
   inline TransactionStatus executeFetchAdd(UseTSX useTsx) {
+    ((void) useTsx);
     return transactionStatusFromAbortCode(
       xact_lockable_atomic_u64_fetch_add_cmpxchg16b(
         params_.target,

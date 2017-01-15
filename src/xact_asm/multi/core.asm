@@ -23,10 +23,10 @@ section .text
         pop r11
 %endmacro
 
-global xact_lockable_atomic_u64_multi_load_2_mvcc
+global xact_multi_u64_load_2_mvcc
         ; using Argument = MultiTransaction::Argument
         ; (Argument *marg1, Argument *marg2) -> uint64_t
-xact_lockable_atomic_u64_multi_load_2_mvcc:
+xact_multi_u64_load_2_mvcc:
     .begin:
         _lu64_push_common_registers
         mov r8, rdi ; marg1
@@ -122,10 +122,10 @@ xact_lockable_atomic_u64_multi_load_2_mvcc:
 
 
 
-global xact_lockable_atomic_u64_multi_store_2_tsx
+global xact_multi_u64_store_2_tsx
         ; using Argument = MultiTransaction::Argument
         ; (Argument *marg1, Argument *marg2) -> uint64_t
-xact_lockable_atomic_u64_multi_store_2_tsx:
+xact_multi_u64_store_2_tsx:
     .begin:
         _lu64_push_common_registers
         mov r8, rdi ; marg1
@@ -177,10 +177,10 @@ xact_lockable_atomic_u64_multi_store_2_tsx:
 
 
 
-global xact_lockable_atomic_u64_multi_store_2_mvcc_with_locks_held
+global xact_multi_u64_store_2_mvcc_with_locks_held
         ; using Argument = MultiTransaction::Argument
         ; (Argument *marg1, Argument *marg2) -> uint64_t
-xact_lockable_atomic_u64_multi_store_2_mvcc_with_locks_held:
+xact_multi_u64_store_2_mvcc_with_locks_held:
     .begin:
         _lu64_push_common_registers
         mov r8, rdi ; marg1
