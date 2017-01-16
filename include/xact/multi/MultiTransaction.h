@@ -52,7 +52,8 @@ class MultiTransaction {
       Argument arg;
       arg.target = loadParam.first;
       arg.arg1 = (uint64_t) loadParam.second;
-      instance.params_.arguments.emplace_back(arg);
+      arg.arg2 = 0;
+      instance.params_.arguments.push_back(arg);
     }
     return instance;
   }

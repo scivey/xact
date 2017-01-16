@@ -12,9 +12,11 @@
 #include "xact/detail/macros.h"
 #include "xact/LockableAtomicU64.h"
 #include "xact/TransactionStatus.h"
+#include "xact_testing/ThreadGroup.h"
 
 using namespace std;
 using xact::LockableAtomicU64;
+using xact_testing::ThreadGroup;
 using xact::detail::LockableAtomicU64Inspector;
 using xact::TransactionStatus;
 using xact::multi::MultiTransaction;
@@ -66,6 +68,7 @@ TEST(TestMultiTransaction, TestStore2TSX) {
   EXPECT_EQ(200, yResult);
 }
 
+
 TEST(TestMultiTransaction, TestStore2WithLocks) {
   AU64 x{0}, y{0};
   uint64_t xVal {100}, yVal {200};
@@ -86,4 +89,26 @@ TEST(TestMultiTransaction, TestStore2WithLocks) {
   EXPECT_EQ(TransactionStatus::OK, executor.execute(MultiTransaction::load(loadArgs)));
   EXPECT_EQ(100, xResult);
   EXPECT_EQ(200, yResult);
+}
+
+
+TEST(TestMultiTransaction, TestLoad2MVCC_MT) {
+  AU64 x{0}, y{0};
+  auto threads = ThreadGroup::createShared(4, [&x, &y](size_t) {
+    gencas_exec_t executor;
+    for (size_t i = 0; i < 10000; i++) {
+      for (;;) {
+        uint64_t xVal {0}, yVal {0};
+        vector<pair<atom_t*, uint64_t*>> loadArgs {
+          {getPointer(x), &xVal},
+          {getPointer(y), &yVal}
+        };
+        auto result = executor.execute(MultiTransaction::load(loadArgs));
+        if (result == TransactionStatus::OK) {
+          break;
+        }
+      }
+    }
+  });
+  threads->join();
 }

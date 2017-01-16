@@ -8,7 +8,7 @@ section .text
 %include "multi/dtypes.asm"
 
 %macro _lu64_push_common_registers 0
-        push r11
+        push rbx
         push r12
         push r13
         push r14
@@ -20,7 +20,7 @@ section .text
         pop r14    
         pop r13
         pop r12
-        pop r11
+        pop rbx
 %endmacro
 
 global xact_multi_u64_load_2_mvcc

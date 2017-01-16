@@ -148,23 +148,39 @@ class TransactionalNumArray {
       << "failed TransactionStatus: " << static_cast<uint64_t>(result);
   }
   void readNAt(size_t *idxs, size_t nIdxs, uint64_t *result) {
+    XACT_MFENCE_BARRIER();
     SmallVector<pair<atom_t*, uint64_t*>> args;
     std::ostringstream oss;
-    oss << "idx : [ ";
-    for (size_t i = 0; i < nIdxs; i++) {
-      size_t idx = *idxs;
-      oss << idx << ", ";
-      args.push_back(std::make_pair(
-        getPointer(*nthPointer(idx)), result
-      ));
-      ++idxs;
-      ++result;
+    // oss << "idx : [ ";
+    uint64_t res {0};
+    args.push_back(std::make_pair(
+      getPointer(*nthPointer(1)), &res
+    ));
+    args.push_back(std::make_pair(
+      getPointer(*nthPointer(1)), &res
+    ));    
+    // for (size_t i = 0; i < nIdxs; i++) {
+    //   size_t idx = *idxs;
+    //   // oss << idx << ", ";
+    //   args.push_back(std::make_pair(
+    //     getPointer(*nthPointer(idx)), result
+    //   ));
+    //   ++idxs;
+    //   ++result;
+    // }
+    // oss << " ]";
+    // LOG(INFO) << oss.str();
+    {
+      auto multiOp = MultiTransaction::load(args);
+      CHECK(multiOp.execute() == TransactionStatus::OK);
+      // CHECK(false);
+      // {
+      //   gencas_exec_t executor;
+      //   // CHECK(executor.execute(multiOp) == TransactionStatus::OK);
+      // }
     }
-    oss << " ]";
-    LOG(INFO) << oss.str();
-    auto multiOp = MultiTransaction::load(args);
-    gencas_exec_t executor;
-    CHECK(executor.execute(multiOp) == TransactionStatus::OK);
+    // CHECK(executor.execute(MultiTransaction::load(args)) == TransactionStatus::OK);
+    XACT_MFENCE_BARRIER();
   }
  public:
   void writeAt(size_t idx, val_t val) {
@@ -269,28 +285,34 @@ std::string rightPad(const std::string &strung, size_t N) {
 
 template<typename TArray>
 void readerThread(TArray *arrayRef, uint64_t seed, size_t numOps) {
-  std::mt19937 engine {seed};
-  std::uniform_int_distribution<uint64_t> dist {
-    0, TArray::maxSize() - 1
-  };
-  static const size_t kReadSize = 2;
-  std::array<size_t, kReadSize> idxs;
-  std::array<uint64_t, kReadSize> values;
-  std::set<size_t> seen;
   XACT_MFENCE_BARRIER();
-  for (size_t i = 0; i < numOps; i++) {
-    for (;;) {
-      size_t idx1 = dist(engine), idx2 = dist(engine);
-      if (idx1 != idx2) {
-        idxs[0] = idx1;
-        idxs[1] = idx2;
-        break;
+  {
+    std::mt19937 engine {seed};
+    std::uniform_int_distribution<uint64_t> dist {
+      0, TArray::maxSize() - 1
+    };
+    static const size_t kReadSize = 2;
+    std::array<size_t, kReadSize> idxs;
+    std::array<uint64_t, kReadSize> values;
+    std::set<size_t> seen;
+    XACT_MFENCE_BARRIER();
+    for (size_t i = 0; i < numOps; i++) {
+      for (;;) {
+        size_t idx1 = dist(engine), idx2 = dist(engine);
+        if (idx1 != idx2) {
+          idxs[0] = idx1;
+          idxs[1] = idx2;
+          break;
+        }
       }
+      arrayRef->readNAt(idxs, values);
     }
-    arrayRef->readNAt(idxs, values);
+    XACT_MFENCE_BARRIER();    
   }
+  LOG(INFO) << "readerThread done; sleeping";
   XACT_MFENCE_BARRIER();
-  LOG(INFO) << "readerThread done";
+  this_thread::sleep_for(chrono::milliseconds(1000));
+  LOG(INFO) << "readerThread done; slept";
 }
 
 template<typename TArray>
@@ -343,14 +365,11 @@ void runOnce(TArray *numArray, const BenchParams& params) {
   }
   vector<thread> threads;
   XACT_MFENCE_BARRIER();
-  std::function<void(uint64_t)> readFunc = [numArray, params](uint64_t mySeed) {
-    XACT_MFENCE_BARRIER();      
-    readerThread(numArray, mySeed, params.nOpsPerThread);
-    XACT_MFENCE_BARRIER();          
-  };
   for (size_t i = 0; i < params.nReaderThreads; i++) {
     uint64_t currentSeed = threadSeeds[i];
-    threads.push_back(thread{readFunc, currentSeed});
+    threads.push_back(thread{
+      readerThread<TArray>, numArray, currentSeed, params.nOpsPerThread
+    });
   }
   for (size_t i = 0; i < params.nWriterThreads; i++) {
     size_t threadIdx = i + params.nReaderThreads;
@@ -365,7 +384,7 @@ void runOnce(TArray *numArray, const BenchParams& params) {
   }
   XACT_MFENCE_BARRIER();  
   LOG(INFO) << "pre-join sleep";
-  std::this_thread::sleep_for(chrono::milliseconds{3000});
+  std::this_thread::sleep_for(chrono::milliseconds{200});
   LOG(INFO) << "pre-join : slept";
 
   for (auto& t: threads) {
