@@ -44,3 +44,46 @@ TEST(TestMultiTransaction, TestLoad2MVCC) {
   EXPECT_EQ(20, result2);
 }
 
+TEST(TestMultiTransaction, TestStore2TSX) {
+  AU64 x{0}, y{0};
+  uint64_t xVal {100}, yVal {200};
+  gencas_exec_t executor;
+  vector<pair<atom_t*, uint64_t>> storeArgs {
+    {getPointer(x), xVal},
+    {getPointer(y), yVal}
+  };
+  EXPECT_EQ(
+    TransactionStatus::OK,
+    executor.execute(MultiTransaction::store(storeArgs))
+  );
+  uint64_t xResult {0}, yResult {0};
+  vector<pair<atom_t*, uint64_t*>> loadArgs {
+    {getPointer(x), &xResult},
+    {getPointer(y), &yResult}
+  };
+  EXPECT_EQ(TransactionStatus::OK, executor.execute(MultiTransaction::load(loadArgs)));
+  EXPECT_EQ(100, xResult);
+  EXPECT_EQ(200, yResult);
+}
+
+TEST(TestMultiTransaction, TestStore2WithLocks) {
+  AU64 x{0}, y{0};
+  uint64_t xVal {100}, yVal {200};
+  gencas_exec_t executor;
+  vector<pair<atom_t*, uint64_t>> storeArgs {
+    {getPointer(x), xVal},
+    {getPointer(y), yVal}
+  };
+  {
+    auto storeOp = MultiTransaction::store(storeArgs);
+    EXPECT_EQ(TransactionStatus::OK, storeOp.lockAndExecute());
+  }
+  uint64_t xResult {0}, yResult {0};
+  vector<pair<atom_t*, uint64_t*>> loadArgs {
+    {getPointer(x), &xResult},
+    {getPointer(y), &yResult}
+  };
+  EXPECT_EQ(TransactionStatus::OK, executor.execute(MultiTransaction::load(loadArgs)));
+  EXPECT_EQ(100, xResult);
+  EXPECT_EQ(200, yResult);
+}

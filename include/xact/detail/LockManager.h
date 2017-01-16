@@ -99,9 +99,10 @@ class LockManager {
     atoms.reserve(nAtoms);
     atom_vec distinctAtoms;
     distinctAtoms.reserve(nAtoms);
-    for (size_t i = 0; nAtoms; i++) {
+    for (size_t i = 0; i < nAtoms; i++) {
       atom_t **currPtr = atomPtrs + i;
-      atoms.emplace_back(*currPtr);
+      atom_t *atomPtr = *currPtr;
+      atoms.push_back(atomPtr);
     }
     std::sort(atoms.begin(), atoms.end());
     atom_t *prev = nullptr;
@@ -110,7 +111,7 @@ class LockManager {
         continue;
       }
       prev = current;
-      distinctAtoms.emplace_back(current);
+      distinctAtoms.push_back(current);
     }
     return LockManager{std::move(distinctAtoms)};
   }
