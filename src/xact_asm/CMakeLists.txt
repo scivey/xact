@@ -3,7 +3,9 @@ find_program(NASM NAMES nasm)
 set(HERE ${CMAKE_CURRENT_SOURCE_DIR})
 set(DEST ${CMAKE_BINARY_DIR})
 
-set(NASM_DEBUG_FLAGS "-gdwarf")
+# set(NASM_DEBUG_FLAGS "-gdwarf")
+set(NASM_DEBUG_FLAGS "")
+
 macro(add_nasm_command src_name obj_name)
     add_custom_command(
         OUTPUT ${DEST}/${obj_name}

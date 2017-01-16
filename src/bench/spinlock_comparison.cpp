@@ -36,7 +36,7 @@ template<size_t N, typename LockType>
 class LockedNumArray {
  public:
   using val_t = uint64_t;
-  using boxed_data_t = std::array<xact::detail::AlignedBox<uint64_t, 16>, N>;
+  using boxed_data_t = std::array<xact::detail::AlignedBox<uint64_t, 64>, N>;
   using lock_t = LockType;
  protected:
   boxed_data_t data_;
@@ -112,11 +112,12 @@ class TransactionalNumArray {
   >;
  protected:
   boxed_data_t data_;
-  static xact_lockable_atomic_u64_t* getPointer(LockableAtomicU64& atom) {
+  static inline xact_lockable_atomic_u64_t* getPointer(LockableAtomicU64& atom) {
     return (xact_lockable_atomic_u64_t*) LockableAtomicU64Inspector(atom).getPointer();
   }
+  static thread_local gencas_exec_t casExecutor_;
 
-  LockableAtomicU64* nthPointer(size_t idx) {
+  inline LockableAtomicU64* nthPointer(size_t idx) {
     return data_[idx].ptr();
   }
  public:
@@ -127,8 +128,7 @@ class TransactionalNumArray {
     gencas_exec_t executor;
     for (size_t i = 0; i < N; i++) {
       auto result = executor.execute(nthPointer(i)->makeStore(0));
-      CHECK(result == TransactionStatus::OK)
-        << "failed TransactionStatus: " << static_cast<uint64_t>(result);
+      XACT_DCHECK(result == TransactionStatus::OK);
     }
   }
  protected:
@@ -142,51 +142,28 @@ class TransactionalNumArray {
       ));
     }
     auto multiOp = MultiTransaction::store(args);
-    gencas_exec_t executor;
-    auto result = executor.execute(multiOp);
-    CHECK(result == TransactionStatus::OK)
-      << "failed TransactionStatus: " << static_cast<uint64_t>(result);
+    auto result = casExecutor_.execute(multiOp);
+    XACT_DCHECK(result == TransactionStatus::OK);
   }
   void readNAt(size_t *idxs, size_t nIdxs, uint64_t *result) {
-    XACT_MFENCE_BARRIER();
     SmallVector<pair<atom_t*, uint64_t*>> args;
-    std::ostringstream oss;
-    // oss << "idx : [ ";
-    uint64_t res {0};
-    args.push_back(std::make_pair(
-      getPointer(*nthPointer(1)), &res
-    ));
-    args.push_back(std::make_pair(
-      getPointer(*nthPointer(1)), &res
-    ));    
-    // for (size_t i = 0; i < nIdxs; i++) {
-    //   size_t idx = *idxs;
-    //   // oss << idx << ", ";
-    //   args.push_back(std::make_pair(
-    //     getPointer(*nthPointer(idx)), result
-    //   ));
-    //   ++idxs;
-    //   ++result;
-    // }
-    // oss << " ]";
-    // LOG(INFO) << oss.str();
-    {
-      auto multiOp = MultiTransaction::load(args);
-      CHECK(multiOp.execute() == TransactionStatus::OK);
-      // CHECK(false);
-      // {
-      //   gencas_exec_t executor;
-      //   // CHECK(executor.execute(multiOp) == TransactionStatus::OK);
-      // }
+    for (size_t i = 0; i < nIdxs; i++) {
+      size_t idx = *idxs;
+      args.push_back(std::make_pair(
+        getPointer(*nthPointer(idx)), result
+      ));
+      ++idxs;
+      ++result;
     }
-    // CHECK(executor.execute(MultiTransaction::load(args)) == TransactionStatus::OK);
-    XACT_MFENCE_BARRIER();
+    auto multiOp = MultiTransaction::load(args);
+    auto status = casExecutor_.execute(multiOp);
+    XACT_DCHECK(casExecutor_.execute(multiOp) == TransactionStatus::OK);
   }
  public:
   void writeAt(size_t idx, val_t val) {
     auto atom = nthPointer(idx);
-    gencas_exec_t executor;
-    CHECK(executor.execute(atom->makeStore(val)) == TransactionStatus::OK);
+    auto status = casExecutor_.execute(atom->makeStore(val));
+    XACT_DCHECK(status == TransactionStatus::OK);
   }
 
   template<size_t NElem>
@@ -197,8 +174,8 @@ class TransactionalNumArray {
   val_t readAt(size_t idx) {
     val_t result;
     auto atom = nthPointer(idx);
-    gencas_exec_t executor;
-    CHECK(executor.execute(atom->makeLoad(&result)) == TransactionStatus::OK);
+    auto status = casExecutor_.execute(atom->makeLoad(&result));
+    XACT_DCHECK(status == TransactionStatus::OK);
     return result;
   }
 
@@ -215,6 +192,9 @@ class TransactionalNumArray {
   }
 
 };
+
+template<size_t N>
+thread_local typename TransactionalNumArray<N>::gencas_exec_t TransactionalNumArray<N>::casExecutor_ {};
 
 
 class Timer {
@@ -295,7 +275,6 @@ void readerThread(TArray *arrayRef, uint64_t seed, size_t numOps) {
     std::array<size_t, kReadSize> idxs;
     std::array<uint64_t, kReadSize> values;
     std::set<size_t> seen;
-    XACT_MFENCE_BARRIER();
     for (size_t i = 0; i < numOps; i++) {
       for (;;) {
         size_t idx1 = dist(engine), idx2 = dist(engine);
@@ -307,12 +286,7 @@ void readerThread(TArray *arrayRef, uint64_t seed, size_t numOps) {
       }
       arrayRef->readNAt(idxs, values);
     }
-    XACT_MFENCE_BARRIER();    
   }
-  LOG(INFO) << "readerThread done; sleeping";
-  XACT_MFENCE_BARRIER();
-  this_thread::sleep_for(chrono::milliseconds(1000));
-  LOG(INFO) << "readerThread done; slept";
 }
 
 template<typename TArray>
@@ -337,7 +311,6 @@ void writerThread(TArray *arrayRef, uint64_t seed, size_t numOps) {
     toWrite[1].second = dist(engine);
     arrayRef->writeNAt(toWrite);
   }
-  LOG(INFO) << "writerThread done";
 }
 
 
@@ -374,7 +347,6 @@ void runOnce(TArray *numArray, const BenchParams& params) {
   for (size_t i = 0; i < params.nWriterThreads; i++) {
     size_t threadIdx = i + params.nReaderThreads;
     uint64_t currentSeed = threadSeeds[threadIdx];
-    LOG(INFO) << "writer!";
     threads.emplace_back([currentSeed, numArray, params]() {
       XACT_MFENCE_BARRIER();
       writerThread(numArray, currentSeed, params.nOpsPerThread);
@@ -383,27 +355,15 @@ void runOnce(TArray *numArray, const BenchParams& params) {
     });
   }
   XACT_MFENCE_BARRIER();  
-  LOG(INFO) << "pre-join sleep";
-  std::this_thread::sleep_for(chrono::milliseconds{200});
-  LOG(INFO) << "pre-join : slept";
-
   for (auto& t: threads) {
-    LOG(INFO) << "join-1";
     t.join();
-    LOG(INFO) << "/join-1";
-
   }
-  XACT_MFENCE_BARRIER();  
-  LOG(INFO) << "post-join";
 }
 
 template<size_t NAtoms>
 void runTransactional(const BenchParams& params) {
-  auto numArray = new TransactionalNumArray<NAtoms>;
-  // TransactionalNumArray<NAtoms> numArray;
-  {
-    runOnce(numArray, params);  
-  }
+  TransactionalNumArray<NAtoms> numArray;
+  runOnce(&numArray, params);  
 }
 
 
@@ -416,7 +376,7 @@ void runLocking(TLockType& lockRef, const BenchParams& params) {
 }
 
 void runBattery() {
-  static const size_t kNAtoms = 128;
+  static const size_t kNAtoms = 1024;
   size_t rootSeed = 0;
   {
     std::mt19937 rootEngine {std::random_device()()};
@@ -427,12 +387,11 @@ void runBattery() {
     rootSeed = 1000;
   }
   BenchParams benchParams;
-  benchParams.nOpsPerThread = 100;
-  benchParams.nWriterThreads = 0;
-  benchParams.nReaderThreads = 1;
+  benchParams.nOpsPerThread = 1000000;
+  benchParams.nWriterThreads = 4;
+  benchParams.nReaderThreads = 4;
   benchParams.rootSeed = rootSeed;
   Timer timer;
-
   {
     timer.start();
     runTransactional<kNAtoms>(benchParams);
