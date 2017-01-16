@@ -3,11 +3,12 @@ find_program(NASM NAMES nasm)
 set(HERE ${CMAKE_CURRENT_SOURCE_DIR})
 set(DEST ${CMAKE_BINARY_DIR})
 
+set(NASM_DEBUG_FLAGS "-gdwarf")
 macro(add_nasm_command src_name obj_name)
     add_custom_command(
         OUTPUT ${DEST}/${obj_name}
         COMMAND ${NASM}
-        ARGS -I ${HERE} -f elf64 -o ${DEST}/${obj_name} ${HERE}/${src_name}
+        ARGS -I ${HERE} -f elf64 ${NASM_DEBUG_FLAGS} -o ${DEST}/${obj_name} ${HERE}/${src_name} 
         DEPENDS ${HERE}/${src_name}
         WORKING_DIRECTORY ${HERE}
     )
