@@ -20,9 +20,11 @@
 #include "xact/LockableAtomicU64.h"
 #include "xact/TransactionStatus.h"
 #include "xact/TransactionExecutor.h"
+#include "xact_testing/ThreadGroup.h"
 
 using namespace std;
 using namespace xact;
+using xact_testing::ThreadGroup;
 using xact::detail::LockableAtomicU64Inspector;
 using xact::LockableAtomicU64;
 using xact::TransactionStatus;
@@ -126,37 +128,27 @@ TEST(TestLockableAtomicU64, TestMultithreadedStupidCAS) {
   LockableAtomicU64 atom {0};
   static const size_t kIncrPerThread = 50000;
   static const size_t kNThreads = 1;
-  XACT_MFENCE_BARRIER();
-  vector<unique_ptr<thread>> threads;
-  for (size_t i = 0; i < kNThreads; i++) {
-    threads.push_back(unique_ptr<thread>{new thread{[&atom]() {
-      size_t nSuccess = 0;
-      gencas_exec_t executor;
-      while (nSuccess < kIncrPerThread) {
-        uint64_t expected = 0;
-        for (;;) {
-          auto res = atom.makeLoad(&expected).execute();
-          EXPECT_EQ(TransactionStatus::OK, res);
-          uint64_t desired = expected + 1;
-          auto casOp = atom.makeCompareExchange(&expected, desired);
-          res = casOp.execute();
-          if (res == TransactionStatus::OK) {
-            nSuccess++;
-            break;
-          }
+  auto threads = ThreadGroup::createShared(kNThreads, [&atom](size_t) {
+    size_t nSuccess = 0;
+    gencas_exec_t executor;
+    while (nSuccess < kIncrPerThread) {
+      uint64_t expected = 0;
+      for (;;) {
+        auto res = atom.makeLoad(&expected).execute();
+        EXPECT_EQ(TransactionStatus::OK, res);
+        uint64_t desired = expected + 1;
+        auto casOp = atom.makeCompareExchange(&expected, desired);
+        res = casOp.execute();
+        if (res == TransactionStatus::OK) {
+          nSuccess++;
+          break;
         }
       }
-    }}});
-  }
-  XACT_MFENCE_BARRIER();
-  for (auto& t: threads) {
-    t->join();
-  }
-  XACT_MFENCE_BARRIER();  
+    }
+  });
+  threads->join();
   uint64_t result {0};
-  XACT_MFENCE_BARRIER();  
   EXPECT_EQ(atom.load(&result), TransactionStatus::OK);
-  XACT_MFENCE_BARRIER();  
   EXPECT_EQ(kNThreads*kIncrPerThread, result);
 }
 

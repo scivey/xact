@@ -8,6 +8,8 @@
 #include "xact/detail/asm/multi_ops.h"
 #include "xact/detail/SmallVector.h"
 #include "xact/detail/named_types.h"
+#include "xact/detail/LockManager.h"
+#include "xact/detail/util/ScopeGuard.h"
 
 namespace xact { namespace multi {
 
@@ -60,7 +62,7 @@ class MultiTransaction {
   template<typename TContainer,
     typename = typename std::enable_if<
       std::is_same<
-        decltype(std::declval<TContainer>().front()),
+        typename TContainer::value_type,
         store_param_t
       >::value,
       TContainer>::type>
@@ -134,18 +136,46 @@ class MultiTransaction {
         return executeCompareExchange(useTsx);
     };
   }
+  inline TransactionStatus executeWithLocksHeld() {
+    return pExecute(UseTSX{false});
+  }
 
  public:
   inline TransactionStatus execute() {
     return pExecute(UseTSX{true});
   }
-  inline TransactionStatus executeWithLocksHeld() {
-    return pExecute(UseTSX{false});
-  }
   inline TransactionStatus lockAndExecute() {
-    return TransactionStatus::EMPTY;
+    using atom_vec = detail::SmallVector<atom_t*>;
+    atom_vec atoms;
+    atoms.reserve(params_.arguments.size());
+    for (auto& arg: params_.arguments) {
+      atoms.push_back(arg.target);
+    }
+    atom_t** dataPtr = atoms.data();
+    auto lockManager = detail::LockManager::create(dataPtr, atoms.size());
+    if (params_.ttype == Type::NOOP) {
+      return TransactionStatus::EMPTY;
+    } else if(params_.ttype == Type::LOAD) {
+      // read-only operation
+      for (;;) {
+        if (lockManager.tryLockForRead()) {
+          auto guard = detail::util::makeGuard([&lockManager]() {
+            lockManager.unlockFromRead();
+          });
+          return this->executeWithLocksHeld();
+        }
+      }
+    } else {
+      for (;;) {
+        if (lockManager.tryLockForWrite()) {
+          auto guard = detail::util::makeGuard([&lockManager]() {
+            lockManager.unlockFromWrite();
+          });
+          return this->executeWithLocksHeld();
+        }
+      }      
+    }
   }
-
 
 };
 

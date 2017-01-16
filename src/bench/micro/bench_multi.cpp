@@ -16,6 +16,7 @@ using namespace xact::detail;
 using gencas_exec_t = TransactionExecutor<DefaultTransactionRetryPolicy>;
 using LU64 = LockableAtomicU64;
 using atom_t = xact_lockable_atomic_u64_t;
+
 static atom_t* getPointer(LockableAtomicU64& atom) {
   return (atom_t*) LockableAtomicU64Inspector(atom).getPointer();
 }
@@ -38,4 +39,30 @@ static void BM_xact_atomic_u64_load_2(benchmark::State& state) {
   }
 }
 BENCHMARK(BM_xact_atomic_u64_load_2);
+
+
+static void BM_xact_atomic_u64_store_2(benchmark::State& state) {
+  LU64 x {0}, y {0};
+  gencas_exec_t executor;
+  uint64_t nextX {200};
+  uint64_t nextY {300};
+  while(state.KeepRunning()) {
+    SmallVector<std::pair<atom_t*, uint64_t>> args {
+      {getPointer(x), nextX},
+      {getPointer(y), nextY}
+    };
+    nextX++;
+    nextY++;
+    if (nextX > 300) {
+      nextX = 200;
+    }
+    if (nextY > 400) {
+      nextX = 300;
+    }
+    auto storeOp = MultiTransaction::store(args);
+    auto outcome = executor.execute(storeOp);
+    CHECK(outcome == TransactionStatus::OK);
+  }
+}
+BENCHMARK(BM_xact_atomic_u64_store_2);
 

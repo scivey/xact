@@ -18,8 +18,14 @@ uint64_t getAbortReturn(uint64_t code) {
 }
 
 TEST(TestTSXAssumptions, TestAbortReturnCode) {
-  EXPECT_EQ(11, getAbortReturn(10));
-  EXPECT_EQ(21, getAbortReturn(20));
-  EXPECT_EQ(31, getAbortReturn(30));
-  EXPECT_EQ(41, getAbortReturn(40));
+  std::vector<uint64_t> codes {10, 20, 30, 40};
+  for (auto code: codes) {
+    for (;;) {
+      auto rc = getAbortReturn(code);
+      if (rc != 0) {
+        EXPECT_EQ(code+1, rc);
+        break;
+      }
+    }
+  }
 }

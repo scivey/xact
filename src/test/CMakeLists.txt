@@ -20,4 +20,7 @@ target_link_libraries(run_unit_tests
 
 add_dependencies(run_unit_tests xact xact_asm)
 
-target_include_directories(run_unit_tests PUBLIC ${XACT_INCLUDE_ROOT})
+target_include_directories(run_unit_tests PUBLIC
+    ${HERE}/include
+    ${XACT_INCLUDE_ROOT}
+)

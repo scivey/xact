@@ -15,11 +15,12 @@
 
 #include "xact/LockableAtomicU64.h"
 #include "xact/TransactionStatus.h"
-
+#include "xact_testing/ThreadGroup.h"
 using namespace std;
 using xact::LockableAtomicU64;
 using xact::detail::LockableAtomicU64Inspector;
 using xact::TransactionStatus;
+using xact_testing::ThreadGroup;
 using namespace xact;
 using namespace xact::generalized_cas;
 
@@ -193,17 +194,12 @@ TEST(TestGeneralizedCAS, TestDCASSad2) {
 
 TEST(TestGeneralizedCAS, TestDoubleCASSingleThreaded) {
   array<LockableAtomicU64, 2> atoms {0, 0};
-  XACT_MFENCE_BARRIER();
-  xact_mfence();  
   static const size_t kIncrPerThread = 10000;
   static const size_t kNThreads = 1;
   static const uint64_t kExpectedVal = kNThreads * kIncrPerThread;
-  XACT_MFENCE_BARRIER();
-  xact_mfence();
   {
     uint64_t expected[2] = {0, 0};
     uint64_t desired[2] = {0, 0};
-    XACT_MFENCE_BARRIER();
     size_t nSuccess = 0;
     gencas_exec_t executor;
     while (nSuccess < kIncrPerThread) {
@@ -218,10 +214,8 @@ TEST(TestGeneralizedCAS, TestDoubleCASSingleThreaded) {
           };
           executor.execute(loadTransaction);
         }
-        XACT_MFENCE_BARRIER();
         desired[0] = expected[0] + 1;
         desired[1] = expected[1] + 1;
-        XACT_MFENCE_BARRIER();
         gencas_t genc {
           {
             Precondition::eq(&atoms[0], expected[0]),
@@ -232,8 +226,6 @@ TEST(TestGeneralizedCAS, TestDoubleCASSingleThreaded) {
             Operation::store(&atoms[1], desired[1])
           }
         };
-        XACT_MFENCE_BARRIER();
-        xact_mfence();
         auto outcome = executor.execute(genc);
         if (outcome == TransactionStatus::OK) {
           nSuccess++;
@@ -242,16 +234,10 @@ TEST(TestGeneralizedCAS, TestDoubleCASSingleThreaded) {
       }
     }
   }
-  XACT_MFENCE_BARRIER();
-  XACT_MFENCE_BARRIER();
   uint64_t result {0};
-  XACT_MFENCE_BARRIER();
   EXPECT_EQ(atoms[0].load(&result), TransactionStatus::OK);
-  XACT_MFENCE_BARRIER();
   EXPECT_EQ(kExpectedVal, result);
-  XACT_MFENCE_BARRIER();
   EXPECT_EQ(atoms[1].load(&result), TransactionStatus::OK);
-  XACT_MFENCE_BARRIER();
   EXPECT_EQ(kExpectedVal, result);
 }
 
@@ -262,72 +248,49 @@ TEST(TestGeneralizedCAS, TestDoubleCASMultiThreaded) {
   static const size_t kExpectedVal = kNThreads * kIncrPerThread;
   std::array<LockableAtomicU64, 2> atoms {0, 0};
   XACT_MFENCE_BARRIER();
-  xact_mfence();  
-  XACT_MFENCE_BARRIER();
-  xact_mfence();
-  vector<unique_ptr<thread>> threads;
-  for (size_t i = 0; i < kNThreads; i++) {
-    threads.push_back(unique_ptr<thread>{new thread{[&atoms]() {
-      uint64_t expected[2] = {0, 0};
-      gencas_exec_t executor;
-      uint64_t desired[2] = {0, 0};
-      XACT_MFENCE_BARRIER();
-      size_t nSuccess = 0;
-      while (nSuccess < kIncrPerThread) {
-        for (;;) {
-          {
-            gencas_t loadTransaction {
-              {},
-              {
-                Operation::load(&atoms[0], &expected[0]),
-                Operation::load(&atoms[1], &expected[1]),
-              }
-            };
-            auto res = executor.execute(loadTransaction);
-            EXPECT_EQ(TransactionStatus::OK, res);
-          }
-          XACT_MFENCE_BARRIER();
-          desired[0] = expected[0] + 1;
-          desired[1] = expected[1] + 1;
-          XACT_MFENCE_BARRIER();
-          gencas_t genc {
+  auto threads = ThreadGroup::createShared(kNThreads, [&atoms](size_t) {
+    uint64_t expected[2] = {0, 0};
+    gencas_exec_t executor;
+    uint64_t desired[2] = {0, 0};
+    size_t nSuccess = 0;
+    while (nSuccess < kIncrPerThread) {
+      for (;;) {
+        {
+          gencas_t loadTransaction {
+            {},
             {
-              Precondition::eq(&atoms[0], expected[0]),
-              Precondition::eq(&atoms[1], expected[1])
-            },
-            {
-              Operation::store(&atoms[0], desired[0]),
-              Operation::store(&atoms[1], desired[1])
+              Operation::load(&atoms[0], &expected[0]),
+              Operation::load(&atoms[1], &expected[1]),
             }
           };
-          XACT_MFENCE_BARRIER();
-          xact_mfence();
-          auto outcome = executor.execute(genc);
-          if (outcome == TransactionStatus::OK) {
-            nSuccess++;
-            break;
+          auto res = executor.execute(loadTransaction);
+          EXPECT_EQ(TransactionStatus::OK, res);
+        }
+        desired[0] = expected[0] + 1;
+        desired[1] = expected[1] + 1;
+        gencas_t genc {
+          {
+            Precondition::eq(&atoms[0], expected[0]),
+            Precondition::eq(&atoms[1], expected[1])
+          },
+          {
+            Operation::store(&atoms[0], desired[0]),
+            Operation::store(&atoms[1], desired[1])
           }
+        };
+        auto outcome = executor.execute(genc);
+        if (outcome == TransactionStatus::OK) {
+          nSuccess++;
+          break;
         }
       }
     }
-    }});
-  }
-  XACT_MFENCE_BARRIER();
-  xact_mfence();  
-
-  for (auto& t: threads) {
-    t->join();
-  }
-  XACT_MFENCE_BARRIER();
-  xact_mfence();  
+  });
+  threads->join();
   uint64_t result {0};
-  XACT_MFENCE_BARRIER();
   EXPECT_EQ(atoms[0].load(&result), TransactionStatus::OK);
-  XACT_MFENCE_BARRIER();
   EXPECT_EQ(kExpectedVal, result);
-  XACT_MFENCE_BARRIER();
   EXPECT_EQ(atoms[1].load(&result), TransactionStatus::OK);
-  XACT_MFENCE_BARRIER();
   EXPECT_EQ(kExpectedVal, result);
 }
 

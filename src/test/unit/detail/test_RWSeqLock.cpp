@@ -7,9 +7,10 @@
 #include <glog/logging.h>
 #include <gtest/gtest.h>
 #include "xact/detail/RWSeqLock.h"
-
+#include "xact_testing/ThreadGroup.h"
 using namespace std;
 using namespace xact::detail;
+using xact_testing::ThreadGroup;
 
 
 TEST(TestRWSeqLock, TestLockUnlockRead) {
@@ -99,51 +100,6 @@ TEST(TestRWSeqLock, TestStressST) {
     }
   }
 }
-
-class ThreadGroup {
-  using func_t = std::function<void(size_t)>;
- protected:
-  size_t size_ {0};
-  std::atomic<size_t> startCount_ {0};
-  std::atomic<size_t> stopCount_ {0};
-  func_t func_ {};
-  std::vector<std::thread> threads_;
-  std::atomic<bool> joined_ {false};
-  ThreadGroup(size_t size, func_t func): size_(size), func_(func) {}
-  void start() {
-    for (size_t i = 0; i < size_; i++) {
-      threads_.emplace_back([this, i]() {
-        size_t current = startCount_.fetch_add(1);
-        while (current != startCount_.load()) {
-          current = startCount_.load();
-        }
-        func_(i);
-        stopCount_.fetch_add(1);
-      });
-    }
-  }
- public:
-  static std::shared_ptr<ThreadGroup> createShared(size_t n, func_t func) {
-    std::shared_ptr<ThreadGroup> result {new ThreadGroup {n, func}};
-    result->start();
-    return result;
-  }
-  void join() {
-    CHECK(!joined_.load());
-    joined_ = true;
-    while (stopCount_.load() != size_) {
-      ;
-    }
-    for (auto& t: threads_) {
-      t.join();
-    }
-  }
-  ~ThreadGroup() {
-    if (!joined_) {
-      join();
-    }
-  }
-};
 
 TEST(TestRWSeqLock, TestStressMT) {
   RWSeqLock slock;
