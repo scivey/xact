@@ -288,7 +288,6 @@ void readerThread(TArray *arrayRef, uint64_t seed, size_t numOps) {
       }
     }
     arrayRef->readNAt(idxs, values);
-    break;
   }
   XACT_MFENCE_BARRIER();
   LOG(INFO) << "readerThread done";
@@ -342,26 +341,38 @@ void runOnce(TArray *numArray, const BenchParams& params) {
       threadSeeds.push_back(dist(topEngine));
     }
   }
-  vector<unique_ptr<thread>> threads;
+  vector<thread> threads;
   XACT_MFENCE_BARRIER();
+  std::function<void(uint64_t)> readFunc = [numArray, params](uint64_t mySeed) {
+    XACT_MFENCE_BARRIER();      
+    readerThread(numArray, mySeed, params.nOpsPerThread);
+    XACT_MFENCE_BARRIER();          
+  };
   for (size_t i = 0; i < params.nReaderThreads; i++) {
     uint64_t currentSeed = threadSeeds[i];
-    threads.push_back(unique_ptr<thread>{new thread{[currentSeed, numArray, params]() {
-      readerThread(numArray, currentSeed, params.nOpsPerThread);
-    }}});
+    threads.push_back(thread{readFunc, currentSeed});
   }
   for (size_t i = 0; i < params.nWriterThreads; i++) {
     size_t threadIdx = i + params.nReaderThreads;
     uint64_t currentSeed = threadSeeds[threadIdx];
-    threads.push_back(unique_ptr<thread>{new thread{[currentSeed, numArray, params]() {
+    LOG(INFO) << "writer!";
+    threads.emplace_back([currentSeed, numArray, params]() {
+      XACT_MFENCE_BARRIER();
       writerThread(numArray, currentSeed, params.nOpsPerThread);
+      XACT_MFENCE_BARRIER();
 
-    }}});
+    });
   }
   XACT_MFENCE_BARRIER();  
-  LOG(INFO) << "pre-join";
+  LOG(INFO) << "pre-join sleep";
+  std::this_thread::sleep_for(chrono::milliseconds{3000});
+  LOG(INFO) << "pre-join : slept";
+
   for (auto& t: threads) {
-    t->join();
+    LOG(INFO) << "join-1";
+    t.join();
+    LOG(INFO) << "/join-1";
+
   }
   XACT_MFENCE_BARRIER();  
   LOG(INFO) << "post-join";
@@ -393,13 +404,13 @@ void runBattery() {
     std::uniform_int_distribution<uint64_t> dist {
       0, std::numeric_limits<uint64_t>::max()
     };
-    rootSeed = dist(rootEngine);
-    // rootSeed = 1000;
+    // rootSeed = dist(rootEngine);
+    rootSeed = 1000;
   }
   BenchParams benchParams;
-  benchParams.nOpsPerThread = 50000;
-  benchParams.nWriterThreads = 1;
-  benchParams.nReaderThreads = 0;
+  benchParams.nOpsPerThread = 100;
+  benchParams.nWriterThreads = 0;
+  benchParams.nReaderThreads = 1;
   benchParams.rootSeed = rootSeed;
   Timer timer;
 
