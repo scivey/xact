@@ -42,4 +42,6 @@ add_subdirectory(${SRC_ROOT}/xact)
 add_subdirectory(${SRC_ROOT}/test)
 add_subdirectory(${SRC_ROOT}/bench)
 add_subdirectory(${SRC_ROOT}/scratch)
+add_subdirectory(${SRC_ROOT}/profiling)
+
 

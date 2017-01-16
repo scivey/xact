@@ -24,4 +24,5 @@ dist
 node_modules
 *.cereal
 external-install
+callgrind.out.*
 

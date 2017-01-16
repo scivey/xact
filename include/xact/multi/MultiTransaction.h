@@ -1,6 +1,7 @@
 #pragma once
 #include <tuple>
 #include <glog/logging.h>
+#include <array>
 #include "xact/TransactionStatus.h"
 #include "xact/detail/asm/lockable_atomic_u64.h"
 #include "xact/detail/asm/lockable_atomic_u64_ops.h"
@@ -29,7 +30,8 @@ class MultiTransaction {
 
   struct Params {
     Type ttype {Type::NOOP};
-    detail::SmallVector<Argument> arguments;
+    std::array<Argument, 16> arguments;
+    size_t nArgs {0};
   };
   Params params_;
 
@@ -48,13 +50,29 @@ class MultiTransaction {
   inline static MultiTransaction load(const TContainer& refs) {
     MultiTransaction instance;
     instance.params_.ttype = Type::LOAD;
+    size_t idx = 0;
     for (const auto& loadParam: refs) {
-      Argument arg;
+      auto& arg = instance.params_.arguments[idx];
       arg.target = loadParam.first;
       arg.arg1 = (uint64_t) loadParam.second;
-      arg.arg2 = 0;
-      instance.params_.arguments.push_back(arg);
+      idx++;
     }
+    instance.params_.nArgs = idx;
+    return instance;
+  }
+
+  using load_init_list = std::initializer_list<load_param_t>;
+  inline static MultiTransaction load(load_init_list&& initList) {
+    MultiTransaction instance;
+    instance.params_.ttype = Type::LOAD;
+    size_t idx = 0;
+    for (auto& loadParam: initList) {
+      auto& arg = instance.params_.arguments[idx];
+      arg.target = loadParam.first;
+      arg.arg1 = (uint64_t) loadParam.second;
+      idx++;
+    }
+    instance.params_.nArgs = idx;
     return instance;
   }
 
@@ -70,12 +88,29 @@ class MultiTransaction {
   inline static MultiTransaction store(const TContainer& refs) {
     MultiTransaction instance;
     instance.params_.ttype = Type::STORE;
+    size_t idx = 0;
     for (const auto& storeParam: refs) {
-      Argument arg;
+      auto& arg = instance.params_.arguments[idx];
       arg.target = storeParam.first;
       arg.arg1 = storeParam.second;
-      instance.params_.arguments.emplace_back(arg);
+      idx++;
     }
+    instance.params_.nArgs = idx;
+    return instance;
+  }
+
+  using store_init_list = std::initializer_list<store_param_t>;
+  inline static MultiTransaction store(store_init_list&& initList) {
+    MultiTransaction instance;
+    instance.params_.ttype = Type::STORE;
+    size_t idx = 0;
+    for (auto& storeParam: initList) {
+      auto& arg = instance.params_.arguments[idx];
+      arg.target = storeParam.first;
+      arg.arg1 = storeParam.second;
+      idx++;
+    }
+    instance.params_.nArgs = idx;
     return instance;
   }
 
@@ -91,13 +126,15 @@ class MultiTransaction {
   inline static MultiTransaction compareExchange(const TContainer& refs) {
     MultiTransaction instance;
     instance.params_.ttype = Type::COMPARE_EXCHANGE;
+    size_t idx = 0;
     for (const auto& casParam: refs) {
-      Argument arg;
+      auto& arg = instance.params_.arguments[idx];
       arg.target = std::get<0>(casParam);
       arg.arg1 = (uint64_t) std::get<1>(casParam);
       arg.arg2 = std::get<2>(casParam);
-      instance.params_.arguments.emplace_back(arg);
+      idx++;
     }
+    instance.params_.nArgs = idx;
     return instance;
   }
 
@@ -106,7 +143,7 @@ class MultiTransaction {
 
   inline TransactionStatus executeStore(UseTSX useTsx) {
     auto& args = params_.arguments;
-    CHECK(args.size() == 2);
+    CHECK(params_.nArgs == 2);
     if (useTsx.value()) {
       auto rc = xact_multi_u64_store_2_tsx(&args[0], &args[1]);
       return transactionStatusFromRax(rc);
@@ -117,7 +154,7 @@ class MultiTransaction {
   }
   inline TransactionStatus executeLoad(UseTSX useTsx) {
     auto& args = params_.arguments;
-    CHECK(args.size() == 2);
+    CHECK(params_.nArgs == 2);
     auto rc = xact_multi_u64_load_2_mvcc(&args[0], &args[1]);
     return transactionStatusFromAbortCode(rc);
   }
@@ -148,9 +185,9 @@ class MultiTransaction {
   inline TransactionStatus lockAndExecute() {
     using atom_vec = detail::SmallVector<atom_t*>;
     atom_vec atoms;
-    atoms.reserve(params_.arguments.size());
-    for (auto& arg: params_.arguments) {
-      atoms.push_back(arg.target);
+    atoms.reserve(params_.nArgs);
+    for (size_t i = 0; i < params_.nArgs; i++) {
+      atoms.push_back(params_.arguments[i].target);
     }
     atom_t** dataPtr = atoms.data();
     auto lockManager = detail::LockManager::create(dataPtr, atoms.size());

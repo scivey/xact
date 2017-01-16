@@ -9,8 +9,8 @@
 #endif
 
 #define XACT_CHECK(expr) do { \
-    auto result = (expr); \
-    if (XACT_UNLIKELY(!result)) { \
+    auto _xact_result__ = (expr); \
+    if (XACT_UNLIKELY(!_xact_result__)) { \
       throw std::runtime_error("check failed: '" #expr "'!"); \
     } \
   } while (0)

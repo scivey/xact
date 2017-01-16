@@ -1,6 +1,8 @@
 #pragma once
 #include "xact/detail/macros.h"
 #include "xact/detail/asm/util.h"
+#include "xact/detail/backoff/XorShiftEngine.h"
+#include "xact/detail/backoff/ExponentialBackoff.h"
 #include "xact/TransactionStatus.h"
 #include <random>
 
@@ -10,7 +12,7 @@ class DefaultTransactionRetryPolicy {
  public:
   template<typename TTransaction>
   bool shouldRetry(TTransaction& xRef, TransactionStatus status, size_t nRetries) {
-    if (nRetries > 1000) {
+    if (nRetries > 50) {
       return false;
     }
     switch (status) {
@@ -58,17 +60,21 @@ class DefaultTransactionRetryPolicy {
 template<typename TRetryPolicy = DefaultTransactionRetryPolicy>
 class TransactionExecutor: public TRetryPolicy {
  protected:
-  std::mt19937 randomEngine_ {std::random_device()()};
-  std::uniform_int_distribution<uint64_t> dist_ {1, 100};
+  xact::detail::backoff::XorShiftEngine randomEngine_ {std::random_device()()};
+  std::uniform_int_distribution<uint32_t> dist_ {1, 30};
  public:
   template<typename TTransaction>
   TransactionStatus execute(TTransaction& transaction) {
     auto result = transaction.execute();
-    size_t nTries = 1;    
-    while (result != TransactionStatus::OK && this->shouldRetry(transaction, result, nTries)) {
-      xact_busy_wait(dist_(randomEngine_));
-      result = transaction.execute();
-      nTries++;
+    size_t nTries = 1;
+    if (result != TransactionStatus::OK) {
+      xact_busy_wait(1);
+      xact::detail::backoff::ExponentialBackoff backoff {4, 100, randomEngine_()};
+      while (result != TransactionStatus::OK && this->shouldRetry(transaction, result, nTries)) {
+        xact_busy_wait(backoff.next());
+        result = transaction.execute();
+        nTries++;
+      }
     }
     if (result != TransactionStatus::OK) {
       result = this->onFailedTransaction(transaction, result, nTries);

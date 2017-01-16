@@ -117,9 +117,6 @@ class TransactionalNumArray {
   }
   static thread_local gencas_exec_t casExecutor_;
 
-  inline LockableAtomicU64* nthPointer(size_t idx) {
-    return data_[idx].ptr();
-  }
  public:
   static size_t maxSize() {
     return N;
@@ -127,35 +124,35 @@ class TransactionalNumArray {
   TransactionalNumArray() {
     gencas_exec_t executor;
     for (size_t i = 0; i < N; i++) {
-      auto result = executor.execute(nthPointer(i)->makeStore(0));
+      TransactionStatus result = executor.execute(nthPointer(i)->makeStore(0));
       XACT_DCHECK(result == TransactionStatus::OK);
     }
   }
  protected:
   void writeNAt(std::pair<size_t, uint64_t> *pairs, size_t nPairs) {
-    SmallVector<pair<atom_t*, val_t>> args;
-    for (size_t i = 0; i < nPairs; i++) {
-      std::pair<size_t, val_t> current = *pairs;
-      ++pairs;
-      args.push_back(std::make_pair(
-        getPointer(*nthPointer(current.first)), current.second
-      ));
-    }
-    auto multiOp = MultiTransaction::store(args);
+    auto secondPair = pairs + 1;
+    // std::array<pair<atom_t*, val_t>, 2> args {
+    //   std::make_pair(nthAtomPointer(pairs->first), pairs->second),
+    //   std::make_pair(nthAtomPointer(secondPair->first), secondPair->second)
+    // };
+    // auto multiOp = MultiTransaction::store(args);
+    auto multiOp = MultiTransaction::store({
+      std::make_pair(nthAtomPointer(pairs->first), pairs->second),
+      std::make_pair(nthAtomPointer(secondPair->first), secondPair->second)
+    });
     auto result = casExecutor_.execute(multiOp);
     XACT_DCHECK(result == TransactionStatus::OK);
   }
   void readNAt(size_t *idxs, size_t nIdxs, uint64_t *result) {
-    SmallVector<pair<atom_t*, uint64_t*>> args;
-    for (size_t i = 0; i < nIdxs; i++) {
-      size_t idx = *idxs;
-      args.push_back(std::make_pair(
-        getPointer(*nthPointer(idx)), result
-      ));
-      ++idxs;
-      ++result;
-    }
-    auto multiOp = MultiTransaction::load(args);
+    // std::array<pair<atom_t*, val_t*>, 2> args {
+    //   std::make_pair(nthAtomPointer(*idxs), result),
+    //   std::make_pair(nthAtomPointer(*(idxs+1)), (result+1))
+    // };
+    // auto multiOp = MultiTransaction::load(args);
+    auto multiOp = MultiTransaction::load({
+      std::make_pair(nthAtomPointer(*idxs), result),
+      std::make_pair(nthAtomPointer(*(idxs+1)), (result+1))      
+    });
     auto status = casExecutor_.execute(multiOp);
     XACT_DCHECK(casExecutor_.execute(multiOp) == TransactionStatus::OK);
   }
@@ -177,6 +174,26 @@ class TransactionalNumArray {
     auto status = casExecutor_.execute(atom->makeLoad(&result));
     XACT_DCHECK(status == TransactionStatus::OK);
     return result;
+  }
+
+  void writeNAt(const SmallVector<pair<atom_t*, uint64_t>> &args) {
+    auto multiOp = MultiTransaction::store(args);
+    auto result = casExecutor_.execute(multiOp);
+    XACT_DCHECK(result == TransactionStatus::OK);
+  }
+
+  void readNAt(const SmallVector<pair<atom_t*, uint64_t*>>& args) {
+    auto multiOp = MultiTransaction::load(args);
+    auto status = casExecutor_.execute(multiOp);
+    XACT_DCHECK(casExecutor_.execute(multiOp) == TransactionStatus::OK);
+  }
+
+  inline LockableAtomicU64* nthPointer(size_t idx) {
+    return data_[idx].ptr();
+  }
+
+  inline atom_t* nthAtomPointer(size_t idx) {
+    return getPointer(*nthPointer(idx));
   }
 
   template<size_t NElem>
@@ -383,13 +400,13 @@ void runBattery() {
     std::uniform_int_distribution<uint64_t> dist {
       0, std::numeric_limits<uint64_t>::max()
     };
-    // rootSeed = dist(rootEngine);
-    rootSeed = 1000;
+    rootSeed = dist(rootEngine);
+    // rootSeed = 1000;
   }
   BenchParams benchParams;
   benchParams.nOpsPerThread = 1000000;
-  benchParams.nWriterThreads = 4;
-  benchParams.nReaderThreads = 4;
+  benchParams.nWriterThreads = 8;
+  benchParams.nReaderThreads = 8;
   benchParams.rootSeed = rootSeed;
   Timer timer;
   {
